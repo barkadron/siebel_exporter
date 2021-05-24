@@ -1,0 +1,9 @@
+[[metric]]
+context = "test"
+metricsdesc = { value= "Gauge metric with APPDATA path." }
+request = "echo %APPDATA%"
+
+[[metric]]
+context = "test"
+metricsdesc = { value= "Another gauge metric with ipconfig info." }
+request = "ipconfig"
