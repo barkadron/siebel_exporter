@@ -1,0 +1,5 @@
+[[metric]]
+context = "list_comp"
+labels = [ "sv_name", "cc_alias" ]
+metricsdesc = { cp_num_run_tasks = "The current number of running tasks for the component.", cp_max_tasks = "The maximum number of running tasks for the component.", cp_actv_mts_procs = "The current number of running multi-threaded shell (MTS) processes for the component.", cp_max_mts_procs = "The maximum number of running multi-threaded shell (MTS) processes for the component.", cp_start_time = "The time when component started.", cp_end_time = "The time when component ended." }
+request = "list comp show SV_NAME, CC_ALIAS, CP_NUM_RUN_TASKS, CP_MAX_TASKS, CP_ACTV_MTS_PROCS, CP_MAX_MTS_PROCS, CP_START_TIME, CP_END_TIME"
