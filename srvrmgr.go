@@ -60,8 +60,14 @@ func NewSrvrmgr(connectCmd string) iSRVRMGR {
 		panic(err)
 	}
 
+	const redirectSuffix = " 2>&1"
+	connectCmd = strings.TrimSpace(connectCmd)
+	if !strings.HasSuffix(connectCmd, redirectSuffix) {
+		connectCmd = connectCmd + redirectSuffix
+	}
+
 	srvrmgr := &SRVRMGR{
-		connectCmd: connectCmd + " 2>&1",
+		connectCmd: connectCmd,
 		serverName: "",
 		cmdWait:    cmd.Wait,
 		cmdIn:      cmdIn,
