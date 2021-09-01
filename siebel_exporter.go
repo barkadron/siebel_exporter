@@ -46,6 +46,7 @@ var (
 
 	dateFormat        = kingpin.Flag("srvrmgr.date-format", "Date format used by srvrmgr. (env: SRVRMGR_DATE_FORMAT)").Default(getEnv("SRVRMGR_DATE_FORMAT", "2006-01-02 15:04:05")).String() // yyyy-mm-dd HH:MM:SS
 	readBufferSize    = kingpin.Flag("srvrmgr.read-buffer-size", "Size (in bytes) of buffer for reading srvrmgr commands output. (env: SRVRMGR_READ_BUFFER_SIZE)").Default(getEnv("SRVRMGR_READ_BUFFER_SIZE", "512")).Int()
+	queryTimeout      = kingpin.Flag("srvrmgr.query-timeout", "Query timeout (in seconds). (env: SRVRMGR_QUERY_TIMEOUT)").Default(getEnv("SRVRMGR_QUERY_TIMEOUT", "5")).Int()
 	srvrmgrConnectCmd = kingpin.Flag("srvrmgr.connect-command", "Command for connect to srvrmgr. (env: SRVRMGR_CONNECT_CMD)").Default(getEnv("SRVRMGR_CONNECT_CMD", "")).String()
 	// Example: "source /siebel/ses/siebsrvr/siebenv.sh && srvrmgr /g localhost /e SBA_82 /s sbldev /u SADMIN /p SADMIN /q"
 
@@ -141,10 +142,6 @@ func getEnv(key, fallback string) string {
 	}
 	return fallback
 }
-
-/***************************
-********* Exporter *********
-***************************/
 
 // Metrics object description
 type Metric struct {

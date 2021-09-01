@@ -2,27 +2,17 @@ package main
 
 import (
 	"fmt"
-	"io"
-	"os/exec"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/prometheus/common/log"
 )
-
-/***************************
-********* SRVRMGR **********
-***************************/
 
 type SRVRMGR struct {
 	connectCmd string
 	serverName string
 	connected  bool
-	cmdWait    func() error
-	cmdIn      io.WriteCloser
-	cmdOut     io.ReadCloser
-	// cmdErr     io.ReadCloser
+	shell      iShell
 }
 
 // Public interface
@@ -40,39 +30,17 @@ type iSRVRMGR interface {
 func NewSrvrmgr(connectCmd string) iSRVRMGR {
 	log.Debugln("NewSrvrmgr")
 
-	shell := "bash" // @TODO: Need universal solution for Linux and Windows
-	cmd := exec.Command(shell)
-
-	cmdIn, err := cmd.StdinPipe()
-	if err != nil {
-		panic(err)
-	}
-	cmdOut, err := cmd.StdoutPipe()
-	if err != nil {
-		panic(err)
-	}
-	// cmdErr, err := cmd.StderrPipe()
-	// if err != nil {
-	// 	panic(err)
+	// Redirection is no longer needed, because now we are able to correctly handle the stdErr
+	// const redirectSuffix = " 2>&1"
+	// connectCmd = strings.TrimSpace(connectCmd)
+	// if !strings.HasSuffix(connectCmd, redirectSuffix) {
+	// 	connectCmd = connectCmd + redirectSuffix
 	// }
-
-	if err := cmd.Start(); err != nil {
-		panic(err)
-	}
-
-	const redirectSuffix = " 2>&1"
-	connectCmd = strings.TrimSpace(connectCmd)
-	if !strings.HasSuffix(connectCmd, redirectSuffix) {
-		connectCmd = connectCmd + redirectSuffix
-	}
 
 	srvrmgr := &SRVRMGR{
 		connectCmd: connectCmd,
 		serverName: "",
-		cmdWait:    cmd.Wait,
-		cmdIn:      cmdIn,
-		cmdOut:     cmdOut,
-		// cmdErr:     cmdErr,
+		shell:      NewShell(),
 	}
 
 	srvrmgr.connect()
@@ -97,7 +65,11 @@ func (srvrmgr *SRVRMGR) GetApplicationServerName() string {
 }
 
 func (srvrmgr *SRVRMGR) ExecuteCommand(cmd string) (string, error) {
-	return srvrmgr.executeCommand(cmd)
+	if strings.ToLower(strings.TrimSpace(cmd)) == "exit" {
+		return "", srvrmgr.disconnect()
+	} else {
+		return srvrmgr.executeCommand(cmd)
+	}
 }
 
 func (srvrmgr *SRVRMGR) PingGatewayServer() bool {
@@ -177,10 +149,7 @@ func (srvrmgr *SRVRMGR) connect() error {
 
 func (srvrmgr *SRVRMGR) disconnect() error {
 	log.Debugln("srvrmgr.disconnect")
-	if err := srvrmgr.exit(true); err != nil {
-		return err
-	}
-	return nil
+	return srvrmgr.exit(true)
 }
 
 func (srvrmgr *SRVRMGR) reconnect() error {
@@ -202,15 +171,12 @@ func (srvrmgr *SRVRMGR) exit(closePipes bool) error {
 	log.Infoln("Close srvrmgr connection...")
 	log.Debugln("closePipes: ", closePipes)
 	// output, err := srvrmgr.executeCommand("exit")
-	_, err := srvrmgr.executeCommand("exit")
+	// _, err := srvrmgr.executeCommand("exit")
+	_, err := srvrmgr.executeCommand("quit")
 	srvrmgr.serverName = ""
 	srvrmgr.connected = false
 	if closePipes {
-		// @TODO: error handling?
-		srvrmgr.cmdIn.Close()
-		srvrmgr.cmdOut.Close()
-		// srvrmgr.cmdErr.Close()
-		srvrmgr.cmdWait()
+		srvrmgr.shell.Terminate()
 	}
 	if err != nil {
 		log.Errorln(err)
@@ -228,17 +194,9 @@ func (srvrmgr *SRVRMGR) exit(closePipes bool) error {
 
 func (srvrmgr *SRVRMGR) executeCommand(cmd string) (string, error) {
 	log.Debugln("srvrmgr.executeCommand")
-	log.Debugf("	'%s'", cmd)
+	// log.Debugf("	'%s'", cmd)
 
-	if _, err := io.WriteString(srvrmgr.cmdIn, cmd+"\n"); err != nil {
-		log.Errorln(err)
-		return "", err
-	}
-
-	// @FIXME: Fail without timeout here if got something in cmd.stdErr
-	time.Sleep(50 * time.Millisecond)
-
-	result, err := srvrmgr.readOutput()
+	result, err := srvrmgr.shell.ExecuteCommand(cmd)
 	if err != nil {
 		log.Errorln(err)
 		return "", err
@@ -268,52 +226,7 @@ func (srvrmgr *SRVRMGR) executeCommand(cmd string) (string, error) {
 	}
 
 	result = strings.Trim(result, " \n")
-	log.Debugf("	RESULT:\n%s", result)
+	// log.Debugf("	RESULT:\n%s", result)
 
 	return result, nil
-}
-
-func (srvrmgr *SRVRMGR) readOutput() (string, error) {
-	// log.Debugln("readOutput")
-	// if stdErrRes, err := read(srvrmgr.cmdErr); err != nil {
-	// 	log.Errorln(err)
-	// 	return "", err
-	// } else {
-	// 	log.Debugln("stdErrRes:'", stdErrRes, "'")
-	// 	if len(stdErrRes) >= 0 {
-	// 		return stdErrRes, nil
-	// 	} else {
-	if stdOutRes, err := read(srvrmgr.cmdOut); err != nil {
-		// log.Errorln(err)
-		return "", err
-	} else {
-		// log.Debugln("stdOutRes:'", stdOutRes, "'")
-		return stdOutRes, nil
-	}
-	// 	}
-	// }
-}
-
-func read(reader io.Reader) (string, error) {
-	var readError error = nil
-	buf := make([]byte, *readBufferSize)
-	data := []byte{}
-
-	for {
-		n, err := reader.Read(buf) // https://golang.org/src/io/io.go?s=3539:3599#L73
-		if n > 0 {
-			data = append(data, buf[:n]...)
-		}
-		if err != nil {
-			if err != io.EOF {
-				readError = err
-			}
-			break
-		}
-		if n < *readBufferSize {
-			break
-		}
-	}
-
-	return string(data), readError
 }
