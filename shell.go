@@ -6,18 +6,20 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/prometheus/common/log"
 )
 
 type Shell struct {
-	cmd *exec.Cmd
-	// cmdWait        func() error
-	cmdIn          *io.WriteCloser
-	cmdOut         *io.ReadCloser
-	cmdErr         *io.ReadCloser
-	readBufferSize int
+	cmd            *exec.Cmd
+	readBufferSize *int
+	stdInPipe      *io.WriteCloser
+	stdOutPipe     *io.ReadCloser
+	stdErrPipe     *io.ReadCloser
+	outCh          *chan string
+	outErrCh       *chan error
+	errCh          *chan error
+	quitCh         *chan bool
 }
 
 // Public interface
@@ -44,31 +46,95 @@ func NewShell() iShell {
 
 	cmd := exec.Command(shellType)
 
-	cmdIn, err := cmd.StdinPipe()
+	stdInPipe, err := cmd.StdinPipe()
 	if err != nil {
 		panic(err)
 	}
-	cmdOut, err := cmd.StdoutPipe()
+	stdOutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		panic(err)
 	}
-	cmdErr, err := cmd.StderrPipe()
+	stdErrPipe, err := cmd.StderrPipe()
 	if err != nil {
 		panic(err)
 	}
 
+	log.Debugln("	- start command")
 	if err := cmd.Start(); err != nil {
 		panic(err)
 	}
 
+	log.Debugln("	- create channels")
+	outCh := make(chan string, 1)
+	outErrCh := make(chan error, 1)
+	errCh := make(chan error, 1)
+	quitCh := make(chan bool, 1)
+
+	log.Debugln("	- init shell struct")
 	shell := &Shell{
-		cmd: cmd,
-		// cmdWait:        cmd.Wait,
-		cmdIn:          &cmdIn,
-		cmdOut:         &cmdOut,
-		cmdErr:         &cmdErr,
-		readBufferSize: *readBufferSize,
+		cmd:            cmd,
+		stdInPipe:      &stdInPipe,
+		stdOutPipe:     &stdOutPipe,
+		stdErrPipe:     &stdErrPipe,
+		readBufferSize: readBufferSize,
+		outCh:          &outCh,
+		outErrCh:       &outErrCh,
+		errCh:          &errCh,
+		quitCh:         &quitCh,
 	}
+
+	log.Debugln("	- run goroutine for read from stderr")
+	// Read stderr
+	go func() {
+		defer close(errCh)
+		for {
+			select {
+			case <-quitCh:
+				log.Debugln("[stderr quitCh]")
+				return
+			default:
+				log.Debugln("[stderr default]")
+				if shell != nil && shell.stdErrPipe != nil {
+					if stdErrRes, err := read(shell.stdErrPipe, shell.readBufferSize); err != nil {
+						log.Debugln("	- stderr (err != nil)")
+						log.Debugln("		>>> '", err, "'")
+						errCh <- err
+					} else {
+						log.Debugln("	- stderr (err == nil)")
+						log.Debugln("		>>> '", stdErrRes, "'")
+						errCh <- errors.New(stdErrRes)
+					}
+				}
+			}
+		}
+	}()
+
+	log.Debugln("	- run goroutine for read from stdout")
+	// Read stdout
+	go func() {
+		defer close(outCh)
+		defer close(outErrCh)
+		for {
+			select {
+			case <-quitCh:
+				log.Debugln("[stdout quitCh]")
+				return
+			default:
+				log.Debugln("[stdout default]")
+				if shell != nil && shell.stdOutPipe != nil {
+					if stdOutRes, err := read(shell.stdOutPipe, shell.readBufferSize); err != nil {
+						log.Debugln("	- stdout (err != nil)")
+						log.Debugln("		>>> '", err, "'")
+						errCh <- err
+					} else {
+						log.Debugln("	- stdout (err == nil)")
+						outCh <- stdOutRes
+					}
+				}
+				// return
+			}
+		}
+	}()
 
 	return shell
 }
@@ -94,38 +160,67 @@ func (shell *Shell) executeCommand(cmd string) (string, error) {
 	log.Debugln("shell.executeCommand")
 	log.Debugf("	'%s'", cmd)
 
-	if _, err := io.WriteString(*shell.cmdIn, cmd+"\n"); err != nil {
+	var (
+		cmdResult string = ""
+		cmdError  error  = nil
+	)
+
+	// @FIXME: this is unstable, need more time...
+	// timeoutCh := make(chan error, 1)
+	// go func() {
+	// 	defer close(timeoutCh)
+	// 	if *queryTimeout <= 0 {
+	// 		return
+	// 	}
+	// 	time.Sleep(time.Second * time.Duration(*queryTimeout))
+	// 	timeoutCh <- errors.New("timeout")
+	// }()
+
+	if _, err := io.WriteString(*shell.stdInPipe, cmd+"\n"); err != nil {
 		log.Errorln(err)
 		return "", err
 	}
 
-	// @FIXME: Fail without timeout here if got something in cmd.stdErr
-	time.Sleep(50 * time.Millisecond)
-
-	result, err := shell.readOutput()
-
-	if err != nil {
-		log.Errorln(err)
-		return "", err
+	select {
+	case cmdResult = <-*shell.outCh:
+		log.Debugln("[chanOut]")
+		break
+	case cmdError = <-*shell.outErrCh:
+		log.Debugln("[chanOutErr]")
+		break
+	case cmdError = <-*shell.errCh:
+		log.Debugln("[chanErr]")
+		break
+		// case cmdError = <-timeoutCh:
+		// 	log.Debugln("[timeout]")
+		// 	break
 	}
 
-	result = strings.Trim(result, " \n")
-	log.Debugf("	RESULT:\n%s", result)
+	if cmdError != nil {
+		log.Errorln(cmdError)
+	} else {
+		cmdResult = strings.Trim(cmdResult, " \n")
+		log.Debugf("	RESULT:\n%s", cmdResult)
+	}
 
-	return result, nil
+	return cmdResult, cmdError
 }
 
 func (shell *Shell) terminate() error {
 	log.Debugln("shell.terminate")
+
+	defer close(*shell.quitCh)
+	*shell.quitCh <- true
+
 	_, err := shell.executeCommand("exit")
 
-	if err := (*shell.cmdIn).Close(); err != nil {
+	if err := (*shell.stdInPipe).Close(); err != nil {
 		log.Errorln(err)
 	}
-	if err := (*shell.cmdOut).Close(); err != nil {
+	if err := (*shell.stdOutPipe).Close(); err != nil {
 		log.Errorln(err)
 	}
-	if err := (*shell.cmdErr).Close(); err != nil {
+	if err := (*shell.stdErrPipe).Close(); err != nil {
 		log.Errorln(err)
 	}
 
@@ -134,94 +229,6 @@ func (shell *Shell) terminate() error {
 	}
 
 	return err
-}
-
-func (shell *Shell) readOutput() (string, error) {
-	log.Debugln("readOutput")
-
-	var readResult string = ""
-	var readError error = nil
-
-	outCh := make(chan string)
-	outErrCh := make(chan error)
-	errCh := make(chan error)
-	// quitCh := make(chan bool)
-
-	// defer close(quitCh)
-
-	// Read stderr
-	go func() {
-		defer close(errCh)
-		// for {
-		// 	select {
-		// 	case <-quitCh:
-		// 		log.Debugln("[stderr quitCh]")
-		// 		return
-		// 	default:
-		// log.Debugln("[stderr default]")
-		if stdErrRes, err := read(shell.cmdErr, &shell.readBufferSize); err != nil {
-			log.Debugln("	- stderr (err != nil)")
-			errCh <- err
-		} else {
-			log.Debugln("	- stderr (err == nil)")
-			log.Debugln("		>>> '", stdErrRes, "'")
-			errCh <- errors.New(stdErrRes)
-		}
-		// return
-		// 	}
-		// }
-	}()
-
-	// Read stdout
-	go func() {
-		defer close(outCh)
-		defer close(outErrCh)
-		// for {
-		// 	select {
-		// 	case <-quitCh:
-		// 		log.Debugln("[stdout quitCh]")
-		// 		return
-		// 	default:
-		// log.Debugln("[stdout default]")
-		if stdOutRes, err := read(shell.cmdOut, &shell.readBufferSize); err != nil {
-			log.Debugln("	- stdout (err != nil)")
-			log.Debugln("		>>> '", err, "'")
-			errCh <- err
-		} else {
-			log.Debugln("	- stdout (err == nil)")
-			outCh <- stdOutRes
-		}
-		// 		return
-		// 	}
-		// }
-	}()
-
-	select {
-	case msg := <-outCh:
-		log.Debugln("[chanOut]")
-		readResult = string(msg)
-	case msg := <-outErrCh:
-		log.Debugln("[chanOutErr]")
-		readError = msg
-	case msg := <-errCh:
-		log.Debugln("[chanErr]")
-		readError = msg
-	case msg := <-time.After(time.Second * time.Duration(*queryTimeout)):
-		log.Debugln("[timeout]")
-		readError = errors.New("timeout (" + msg.String() + ")")
-	}
-
-	// log.Debugln("	readResult:\n", readResult)
-	// log.Debugln("	readError:\n", readError)
-
-	// quitCh <- true
-
-	// log.Debugln("return")
-
-	// leaks ((((
-	log.Warnf("Number of hanging goroutines: %d", runtime.NumGoroutine()-1)
-
-	return readResult, readError
 }
 
 func read(reader *io.ReadCloser, bufferSize *int) (string, error) {
