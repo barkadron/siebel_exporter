@@ -1,23 +1,24 @@
-package main
+package srvrmgr
 
 import (
 	"fmt"
 	"regexp"
 	"strings"
 
+	"github.com/barkadron/siebel_exporter/shell"
 	"github.com/prometheus/common/log"
 )
 
-type SRVRMGR struct {
+type srvrMgr struct {
 	connectCmd string
 	serverName string
 	connected  bool
-	shell      iShell
+	shell      shell.Shell
 }
 
 // Public interface
 // https://stackoverflow.com/a/53034166
-type iSRVRMGR interface {
+type SrvrMgr interface {
 	Reconnect() error
 	Disconnect() error
 	IsConnected() bool
@@ -27,7 +28,7 @@ type iSRVRMGR interface {
 	// PingApplicationServer() bool
 }
 
-func NewSrvrmgr(connectCmd string) iSRVRMGR {
+func NewSrvrmgr(connectCmd string, shell shell.Shell) SrvrMgr {
 	log.Debugln("NewSrvrmgr")
 
 	// Redirection is no longer needed, because now we are able to correctly handle the stdErr
@@ -37,47 +38,48 @@ func NewSrvrmgr(connectCmd string) iSRVRMGR {
 	// 	connectCmd = connectCmd + redirectSuffix
 	// }
 
-	srvrmgr := &SRVRMGR{
+	sm := &srvrMgr{
 		connectCmd: connectCmd,
 		serverName: "",
-		shell:      NewShell(),
+		connected:  false,
+		shell:      shell,
 	}
 
-	srvrmgr.connect()
+	sm.connect()
 
-	return srvrmgr
+	return sm
 }
 
-func (srvrmgr *SRVRMGR) IsConnected() bool {
-	return srvrmgr.connected
+func (sm *srvrMgr) IsConnected() bool {
+	return sm.connected
 }
 
-func (srvrmgr *SRVRMGR) Reconnect() error {
-	return srvrmgr.reconnect()
+func (sm *srvrMgr) Reconnect() error {
+	return sm.reconnect()
 }
 
-func (srvrmgr *SRVRMGR) Disconnect() error {
-	return srvrmgr.disconnect()
+func (sm *srvrMgr) Disconnect() error {
+	return sm.disconnect()
 }
 
-func (srvrmgr *SRVRMGR) GetApplicationServerName() string {
-	return srvrmgr.serverName
+func (sm *srvrMgr) GetApplicationServerName() string {
+	return sm.serverName
 }
 
-func (srvrmgr *SRVRMGR) ExecuteCommand(cmd string) (string, error) {
+func (sm *srvrMgr) ExecuteCommand(cmd string) (string, error) {
 	if strings.ToLower(strings.TrimSpace(cmd)) == "exit" {
-		return "", srvrmgr.disconnect()
+		return "", sm.disconnect()
 	} else {
-		return srvrmgr.executeCommand(cmd)
+		return sm.executeCommand(cmd)
 	}
 }
 
-func (srvrmgr *SRVRMGR) PingGatewayServer() bool {
+func (sm *srvrMgr) PingGatewayServer() bool {
 	log.Debugln("Ping Siebel Gateway Server...")
-	_, err := srvrmgr.executeCommand("list ent param MaxThreads show PA_VALUE")
+	_, err := sm.executeCommand("list ent param MaxThreads show PA_VALUE")
 	if err != nil {
 		log.Errorln("Error pinging Siebel Gateway Server: \n", err, "\n")
-		srvrmgr.exit(false)
+		sm.exit(false)
 		return false // Down
 	}
 	log.Debugln("Successfully pinged Siebel Gateway Server.")
@@ -116,13 +118,13 @@ func (srvrmgr *SRVRMGR) PingApplicationServer() bool {
 *** internal methods ***
 ***********************/
 
-func (srvrmgr *SRVRMGR) connect() error {
+func (sm *srvrMgr) connect() error {
 	log.Debugln("srvrmgr.connect")
-	if srvrmgr.connected {
+	if sm.connected {
 		return nil
 	}
 	log.Infoln("Connecting to srvrmgr...")
-	connRes, err := srvrmgr.executeCommand(srvrmgr.connectCmd)
+	connRes, err := sm.executeCommand(sm.connectCmd)
 	if err != nil {
 		log.Errorln(err)
 		return err
@@ -131,9 +133,9 @@ func (srvrmgr *SRVRMGR) connect() error {
 		// Set the actual server name
 		serverNameMatch := regexp.MustCompile("srvrmgr:([^>]+?)>").FindStringSubmatch(connRes)
 		if len(serverNameMatch) >= 1 {
-			srvrmgr.serverName = serverNameMatch[1]
-			srvrmgr.connected = true
-			log.Infoln("Successfully connected to server: ", srvrmgr.serverName)
+			sm.serverName = serverNameMatch[1]
+			sm.connected = true
+			log.Infoln("Successfully connected to server: ", sm.serverName)
 		} else {
 			return fmt.Errorf("error! siebel server name was not found: '%s'", connRes)
 		}
@@ -142,41 +144,41 @@ func (srvrmgr *SRVRMGR) connect() error {
 	}
 
 	// Disable footer (last string in command result like "12 rows returned.")
-	srvrmgr.executeCommand("set footer false")
+	sm.executeCommand("set footer false")
 
 	return nil
 }
 
-func (srvrmgr *SRVRMGR) disconnect() error {
+func (sm *srvrMgr) disconnect() error {
 	log.Debugln("srvrmgr.disconnect")
-	return srvrmgr.exit(true)
+	return sm.exit(true)
 }
 
-func (srvrmgr *SRVRMGR) reconnect() error {
+func (sm *srvrMgr) reconnect() error {
 	log.Debugln("srvrmgr.reconnect")
-	if err := srvrmgr.exit(false); err != nil {
+	if err := sm.exit(false); err != nil {
 		return err
 	}
-	if err := srvrmgr.connect(); err != nil {
+	if err := sm.connect(); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (srvrmgr *SRVRMGR) exit(closePipes bool) error {
+func (sm *srvrMgr) exit(closePipes bool) error {
 	log.Debugln("srvrmgr.exit")
-	if !srvrmgr.connected {
+	if !sm.connected {
 		return nil
 	}
 	log.Infoln("Close srvrmgr connection...")
 	log.Debugln("closePipes: ", closePipes)
-	// output, err := srvrmgr.executeCommand("exit")
-	// _, err := srvrmgr.executeCommand("exit")
-	_, err := srvrmgr.executeCommand("quit")
-	srvrmgr.serverName = ""
-	srvrmgr.connected = false
+	// output, err := s.executeCommand("exit")
+	// _, err := s.executeCommand("exit")
+	_, err := sm.executeCommand("quit")
+	sm.serverName = ""
+	sm.connected = false
 	if closePipes {
-		srvrmgr.shell.Terminate()
+		sm.shell.Terminate()
 	}
 	if err != nil {
 		log.Errorln(err)
@@ -192,11 +194,11 @@ func (srvrmgr *SRVRMGR) exit(closePipes bool) error {
 	return nil
 }
 
-func (srvrmgr *SRVRMGR) executeCommand(cmd string) (string, error) {
+func (sm *srvrMgr) executeCommand(cmd string) (string, error) {
 	log.Debugln("srvrmgr.executeCommand")
 	// log.Debugf("	'%s'", cmd)
 
-	result, err := srvrmgr.shell.ExecuteCommand(cmd)
+	result, err := sm.shell.ExecuteCommand(cmd)
 	if err != nil {
 		log.Errorln(err)
 		return "", err
@@ -221,8 +223,8 @@ func (srvrmgr *SRVRMGR) executeCommand(cmd string) (string, error) {
 	}
 
 	// Remove last row with srvrmgr command prompt ('srvrmgr:sbldev>' )
-	if len(srvrmgr.serverName) > 0 {
-		result = regexp.MustCompile("srvrmgr:"+srvrmgr.serverName+">").ReplaceAllString(result, "")
+	if len(sm.serverName) > 0 {
+		result = regexp.MustCompile("srvrmgr:"+sm.serverName+">").ReplaceAllString(result, "")
 	}
 
 	result = strings.Trim(result, " \n")

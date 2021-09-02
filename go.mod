@@ -1,4 +1,4 @@
-module siebel_exporter
+module github.com/barkadron/siebel_exporter
 
 go 1.16
 

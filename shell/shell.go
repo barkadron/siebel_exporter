@@ -1,4 +1,4 @@
-package main
+package shell
 
 import (
 	"errors"
@@ -10,9 +10,9 @@ import (
 	"github.com/prometheus/common/log"
 )
 
-type Shell struct {
+type shell struct {
 	cmd            *exec.Cmd
-	readBufferSize *int
+	readBufferSize int
 	stdInPipe      *io.WriteCloser
 	stdOutPipe     *io.ReadCloser
 	stdErrPipe     *io.ReadCloser
@@ -24,12 +24,12 @@ type Shell struct {
 
 // Public interface
 // https://stackoverflow.com/a/53034166
-type iShell interface {
+type Shell interface {
 	ExecuteCommand(cmd string) (string, error)
 	Terminate() error
 }
 
-func NewShell() iShell {
+func NewShell(readBufferSize int) Shell {
 	log.Debugln("NewShell")
 
 	var shellType string
@@ -71,7 +71,7 @@ func NewShell() iShell {
 	quitCh := make(chan bool, 1)
 
 	log.Debugln("	- init shell struct")
-	shell := &Shell{
+	s := &shell{
 		cmd:            cmd,
 		stdInPipe:      &stdInPipe,
 		stdOutPipe:     &stdOutPipe,
@@ -94,8 +94,8 @@ func NewShell() iShell {
 				return
 			default:
 				log.Debugln("[stderr default]")
-				if shell != nil && shell.stdErrPipe != nil {
-					if stdErrRes, err := read(shell.stdErrPipe, shell.readBufferSize); err != nil {
+				if s != nil && s.stdErrPipe != nil {
+					if stdErrRes, err := read(s.stdErrPipe, s.readBufferSize); err != nil {
 						log.Debugln("	- stderr (err != nil)")
 						log.Debugln("		>>> '", err, "'")
 						errCh <- err
@@ -121,8 +121,8 @@ func NewShell() iShell {
 				return
 			default:
 				log.Debugln("[stdout default]")
-				if shell != nil && shell.stdOutPipe != nil {
-					if stdOutRes, err := read(shell.stdOutPipe, shell.readBufferSize); err != nil {
+				if s != nil && s.stdOutPipe != nil {
+					if stdOutRes, err := read(s.stdOutPipe, s.readBufferSize); err != nil {
 						log.Debugln("	- stdout (err != nil)")
 						log.Debugln("		>>> '", err, "'")
 						errCh <- err
@@ -136,27 +136,27 @@ func NewShell() iShell {
 		}
 	}()
 
-	return shell
+	return s
 }
 
-func (shell *Shell) ExecuteCommand(cmd string) (string, error) {
+func (s *shell) ExecuteCommand(cmd string) (string, error) {
 	if strings.ToLower(strings.TrimSpace(cmd)) == "exit" {
-		return "", shell.terminate()
+		return "", s.terminate()
 	} else {
-		return shell.executeCommand(cmd)
+		return s.executeCommand(cmd)
 	}
 }
 
-func (shell *Shell) Terminate() error {
+func (s *shell) Terminate() error {
 	log.Debugln("shell.Terminate")
-	return shell.terminate()
+	return s.terminate()
 }
 
 /***********************
 *** internal methods ***
 ***********************/
 
-func (shell *Shell) executeCommand(cmd string) (string, error) {
+func (s *shell) executeCommand(cmd string) (string, error) {
 	log.Debugln("shell.executeCommand")
 	log.Debugf("	'%s'", cmd)
 
@@ -176,19 +176,19 @@ func (shell *Shell) executeCommand(cmd string) (string, error) {
 	// 	timeoutCh <- errors.New("timeout")
 	// }()
 
-	if _, err := io.WriteString(*shell.stdInPipe, cmd+"\n"); err != nil {
+	if _, err := io.WriteString(*s.stdInPipe, cmd+"\n"); err != nil {
 		log.Errorln(err)
 		return "", err
 	}
 
 	select {
-	case cmdResult = <-*shell.outCh:
+	case cmdResult = <-*s.outCh:
 		log.Debugln("[chanOut]")
 		break
-	case cmdError = <-*shell.outErrCh:
+	case cmdError = <-*s.outErrCh:
 		log.Debugln("[chanOutErr]")
 		break
-	case cmdError = <-*shell.errCh:
+	case cmdError = <-*s.errCh:
 		log.Debugln("[chanErr]")
 		break
 		// case cmdError = <-timeoutCh:
@@ -206,34 +206,34 @@ func (shell *Shell) executeCommand(cmd string) (string, error) {
 	return cmdResult, cmdError
 }
 
-func (shell *Shell) terminate() error {
+func (s *shell) terminate() error {
 	log.Debugln("shell.terminate")
 
-	defer close(*shell.quitCh)
-	*shell.quitCh <- true
+	defer close(*s.quitCh)
+	*s.quitCh <- true
 
-	_, err := shell.executeCommand("exit")
+	_, err := s.executeCommand("exit")
 
-	if err := (*shell.stdInPipe).Close(); err != nil {
+	if err := (*s.stdInPipe).Close(); err != nil {
 		log.Errorln(err)
 	}
-	if err := (*shell.stdOutPipe).Close(); err != nil {
+	if err := (*s.stdOutPipe).Close(); err != nil {
 		log.Errorln(err)
 	}
-	if err := (*shell.stdErrPipe).Close(); err != nil {
+	if err := (*s.stdErrPipe).Close(); err != nil {
 		log.Errorln(err)
 	}
 
-	if err := shell.cmd.Wait(); err != nil {
+	if err := s.cmd.Wait(); err != nil {
 		log.Errorln(err)
 	}
 
 	return err
 }
 
-func read(reader *io.ReadCloser, bufferSize *int) (string, error) {
+func read(reader *io.ReadCloser, bufferSize int) (string, error) {
 	var readError error = nil
-	buf := make([]byte, *bufferSize)
+	buf := make([]byte, bufferSize)
 	data := []byte{}
 
 	for {
@@ -247,7 +247,7 @@ func read(reader *io.ReadCloser, bufferSize *int) (string, error) {
 			}
 			break
 		}
-		if n < *bufferSize {
+		if n < bufferSize {
 			break
 		}
 	}
