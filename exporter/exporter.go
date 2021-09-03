@@ -45,22 +45,22 @@ type Metrics struct {
 
 // Exporter collects Siebel metrics. It implements prometheus.Collector.
 type Exporter struct {
-	namespace                 string
-	subsystem                 string
-	dateFormat                string
-	overrideEmptyMetricsValue string
-	defaultMetricsFile        string
-	customMetricsFile         string
-	srvrmgr                   srvrmgr.SrvrMgr
-	duration, error           prometheus.Gauge
-	totalScrapes              prometheus.Counter
-	scrapeErrors              *prometheus.CounterVec
-	gatewayServerUp           prometheus.Gauge
+	namespace            string
+	subsystem            string
+	dateFormat           string
+	emptyMetricsOverride string
+	defaultMetricsFile   string
+	customMetricsFile    string
+	srvrmgr              srvrmgr.SrvrMgr
+	duration, error      prometheus.Gauge
+	totalScrapes         prometheus.Counter
+	scrapeErrors         *prometheus.CounterVec
+	gatewayServerUp      prometheus.Gauge
 	// appServerUp     prometheus.Gauge
 }
 
 // NewExporter returns a new Siebel exporter for the provided args.
-func NewExporter(namespace, subsystem, defaultMetricsFile, customMetricsFile, dateFormat, overrideEmptyMetricsValue string, srvrmgr srvrmgr.SrvrMgr) *Exporter {
+func NewExporter(namespace, subsystem, defaultMetricsFile, customMetricsFile, dateFormat, emptyMetricsOverride string, srvrmgr srvrmgr.SrvrMgr) *Exporter {
 	// log.Infoln("Creating new Exporter...")
 
 	// Load default and custom metrics
@@ -72,13 +72,13 @@ func NewExporter(namespace, subsystem, defaultMetricsFile, customMetricsFile, da
 	// }
 
 	return &Exporter{
-		namespace:                 namespace,
-		subsystem:                 subsystem,
-		dateFormat:                dateFormat,
-		overrideEmptyMetricsValue: overrideEmptyMetricsValue,
-		defaultMetricsFile:        defaultMetricsFile,
-		customMetricsFile:         customMetricsFile,
-		srvrmgr:                   srvrmgr,
+		namespace:            namespace,
+		subsystem:            subsystem,
+		dateFormat:           dateFormat,
+		emptyMetricsOverride: emptyMetricsOverride,
+		defaultMetricsFile:   defaultMetricsFile,
+		customMetricsFile:    customMetricsFile,
+		srvrmgr:              srvrmgr,
 		duration: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
@@ -238,7 +238,7 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		}
 
 		scrapeStart := time.Now()
-		if err = ScrapeMetric(e.namespace, e.dateFormat, e.overrideEmptyMetricsValue, e.srvrmgr, ch, metric); err != nil {
+		if err = ScrapeMetric(e.namespace, e.dateFormat, e.emptyMetricsOverride, e.srvrmgr, ch, metric); err != nil {
 			log.Errorln("Error scraping for", metric.Context, "_", metric.MetricsDesc, ":", err)
 			e.scrapeErrors.WithLabelValues(metric.Context).Inc()
 		} else {
