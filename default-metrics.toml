@@ -1,5 +1,20 @@
 [[metric]]
+request = "list comp show SV_NAME, CC_ALIAS, CP_DISP_RUN_STATE, CP_NUM_RUN_TASKS, CP_MAX_TASKS, CP_ACTV_MTS_PROCS, CP_MAX_MTS_PROCS, CP_START_TIME, CP_END_TIME"
 context = "list_comp"
-labels = [ "sv_name", "cc_alias" ]
-metricsdesc = { cp_num_run_tasks = "The current number of running tasks for the component.", cp_max_tasks = "The maximum number of running tasks for the component.", cp_actv_mts_procs = "The current number of running multi-threaded shell (MTS) processes for the component.", cp_max_mts_procs = "The maximum number of running multi-threaded shell (MTS) processes for the component.", cp_start_time = "The time when component started.", cp_end_time = "The time when component ended." }
-request = "list comp show SV_NAME, CC_ALIAS, CP_NUM_RUN_TASKS, CP_MAX_TASKS, CP_ACTV_MTS_PROCS, CP_MAX_MTS_PROCS, CP_START_TIME, CP_END_TIME"
+labels = [ "SV_NAME", "CC_ALIAS" ]
+[metric.valuemap.CP_DISP_RUN_STATE] # https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor4.html#wp1036510
+Unavailable = "1"
+Shutdown = "2"
+"Shutting Down" = "3"
+Offline = "4"
+"Starting Up" = "5"
+Online = "6"
+Running = "7"
+[metric.metricsdesc]
+CP_DISP_RUN_STATE = "The current state of the component."
+CP_NUM_RUN_TASKS = "The current number of running tasks for the component."
+CP_MAX_TASKS = "The maximum number of running tasks for the component."
+CP_ACTV_MTS_PROCS = "The current number of running multi-threaded shell (MTS) processes for the component."
+CP_MAX_MTS_PROCS = "The maximum number of running multi-threaded shell (MTS) processes for the component."
+CP_START_TIME = "The time when component started."
+CP_END_TIME = "The time when component ended."

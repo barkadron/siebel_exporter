@@ -36,6 +36,7 @@ type Metric struct {
 	FieldToAppend    string
 	Request          string
 	IgnoreZeroResult bool
+	ValueMap         map[string]map[string]string
 }
 
 // Used to load multiple metrics from file
@@ -215,6 +216,7 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		log.Debugln("	- Metric Labels: ", metric.Labels)
 		log.Debugln("	- Metric FieldToAppend: ", metric.FieldToAppend)
 		log.Debugln("	- Metric IgnoreZeroResult: ", metric.IgnoreZeroResult)
+		log.Debugln("	- Metric ValueMap: ", metric.ValueMap)
 		log.Debugln("	- Metric Request: ", metric.Request)
 
 		if len(metric.Request) == 0 {
@@ -268,14 +270,13 @@ func GetMetricType(metricType string, metricsType map[string]string) prometheus.
 // interface method to call ScrapeGenericValues using Metric struct values
 func ScrapeMetric(namespace string, dateFormat string, overrideEmptyMetricsValue string, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric, metricDefinition Metric) error {
 	return ScrapeGenericValues(namespace, dateFormat, overrideEmptyMetricsValue, srvrmgr, ch, metricDefinition.Context, metricDefinition.Labels,
-		metricDefinition.MetricsDesc, metricDefinition.MetricsType, metricDefinition.MetricsBuckets,
-		metricDefinition.FieldToAppend, metricDefinition.IgnoreZeroResult,
-		metricDefinition.Request)
+		metricDefinition.MetricsDesc, metricDefinition.MetricsType, metricDefinition.MetricsBuckets, metricDefinition.FieldToAppend,
+		metricDefinition.IgnoreZeroResult, metricDefinition.ValueMap, metricDefinition.Request)
 }
 
 // generic method for retrieving metrics.
 func ScrapeGenericValues(namespace string, dateFormat string, overrideEmptyMetricsValue string, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric, context string, labels []string,
-	metricsDesc map[string]string, metricsType map[string]string, metricsBuckets map[string]map[string]string, fieldToAppend string, ignoreZeroResult bool, request string) error {
+	metricsDesc map[string]string, metricsType map[string]string, metricsBuckets map[string]map[string]string, fieldToAppend string, ignoreZeroResult bool, valueMap map[string]map[string]string, request string) error {
 	metricsCount := 0
 	genericParser := func(row map[string]string) error {
 		log.Debugln("genericParser | row map:\n", row)
@@ -286,19 +287,32 @@ func ScrapeGenericValues(namespace string, dateFormat string, overrideEmptyMetri
 		}
 		// Construct Prometheus values to sent back
 		for metric, metricHelp := range metricsDesc {
-			value, err := strconv.ParseFloat(strings.TrimSpace(row[metric]), 64)
+			value := row[metric]
+			// Value mapping
+			if val1, exists1 := valueMap[metric]; exists1 {
+				if val2, exists2 := val1[value]; exists2 {
+					log.Debugln("[ValueMap]: Value '" + value + "' converted to '" + val2 + "'.")
+					value = val2
+				}
+			}
 			// If not a float, skip current metric
+			parsedValue, err := strconv.ParseFloat(value, 64)
 			if err != nil {
-				log.Errorln("Unable to convert current value to float (metric=" + metric + ",metricHelp=" + metricHelp + ",value=<" + row[metric] + ">)")
+				log.Errorln("Unable to convert current value to float (metric=" + metric + ",metricHelp=" + metricHelp + ",value=<" + value + ">)")
 				continue
 			}
-			log.Debugln("Request result looks like: [", metric, "] : ", value)
+			log.Debugln("Request result looks like: [", metric, "] : ", parsedValue)
 			// If metric do not use a field content in metric's name
 			if strings.Compare(fieldToAppend, "") == 0 {
+				promLabels := []string{}
+				for _, label := range labels {
+					promLabels = append(promLabels, strings.ToLower(label))
+				}
 				desc := prometheus.NewDesc(
-					prometheus.BuildFQName(namespace, context, metric),
+					prometheus.BuildFQName(namespace, context, cleanName(metric)),
 					metricHelp,
-					labels, nil,
+					promLabels,
+					nil,
 				)
 				if metricsType[strings.ToLower(metric)] == "histogram" {
 					count, err := strconv.ParseUint(strings.TrimSpace(row["count"]), 10, 64)
@@ -320,16 +334,17 @@ func ScrapeGenericValues(namespace string, dateFormat string, overrideEmptyMetri
 						}
 						buckets[lelimit] = counter
 					}
-					ch <- prometheus.MustNewConstHistogram(desc, count, value, buckets, labelsValues...)
+					ch <- prometheus.MustNewConstHistogram(desc, count, parsedValue, buckets, labelsValues...)
 				} else {
-					ch <- prometheus.MustNewConstMetric(desc, GetMetricType(metric, metricsType), value, labelsValues...)
+					ch <- prometheus.MustNewConstMetric(desc, GetMetricType(metric, metricsType), parsedValue, labelsValues...)
 				}
 				// If no labels, use metric name
 			} else {
 				desc := prometheus.NewDesc(
 					prometheus.BuildFQName(namespace, context, cleanName(row[fieldToAppend])),
 					metricHelp,
-					nil, nil,
+					nil,
+					nil,
 				)
 				if metricsType[strings.ToLower(metric)] == "histogram" {
 					count, err := strconv.ParseUint(strings.TrimSpace(row["count"]), 10, 64)
@@ -351,9 +366,9 @@ func ScrapeGenericValues(namespace string, dateFormat string, overrideEmptyMetri
 						}
 						buckets[lelimit] = counter
 					}
-					ch <- prometheus.MustNewConstHistogram(desc, count, value, buckets)
+					ch <- prometheus.MustNewConstHistogram(desc, count, parsedValue, buckets)
 				} else {
-					ch <- prometheus.MustNewConstMetric(desc, GetMetricType(metric, metricsType), value)
+					ch <- prometheus.MustNewConstMetric(desc, GetMetricType(metric, metricsType), parsedValue)
 				}
 			}
 			metricsCount++
@@ -425,7 +440,8 @@ func GeneratePrometheusMetrics(srvrmgr srvrmgr.SrvrMgr, parse func(row map[strin
 				val = convertDateStringToTimestamp(val, dateFormat)
 			}
 
-			dataMap[strings.ToLower(colName)] = val
+			// dataMap[strings.ToLower(colName)] = val
+			dataMap[colName] = val
 
 			// Cut off used value from row
 			row = row[colMaxLen:]
@@ -468,6 +484,7 @@ func convertDateStringToTimestamp(s string, dateFormat string) string {
 
 // If Siebel gives us some ugly names back, this function cleans it up for Prometheus.
 func cleanName(s string) string {
+	s = strings.TrimSpace(s)             // Trim spaces
 	s = strings.Replace(s, " ", "_", -1) // Remove spaces
 	s = strings.Replace(s, "(", "", -1)  // Remove open parenthesis
 	s = strings.Replace(s, ")", "", -1)  // Remove close parenthesis
