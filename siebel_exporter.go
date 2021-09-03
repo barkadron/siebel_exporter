@@ -87,7 +87,7 @@ func main() {
 	}()
 
 	srvrMgr = srvrmgr.NewSrvrmgr(*srvrmgrConnectCmd, shell.NewShell(*readBufferSize))
-	exp := exporter.NewExporter(namespace, subsystem, *dateFormat, *emptyMetricsOverride, *defaultMetricsFile, *customMetricsFile, srvrMgr)
+	exp := exporter.NewExporter(namespace, subsystem, *defaultMetricsFile, *customMetricsFile, *dateFormat, *emptyMetricsOverride, srvrMgr)
 
 	prometheus.MustRegister(exp)
 	prometheus.MustRegister(version.NewCollector(exporterName))
