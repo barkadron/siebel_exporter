@@ -64,4 +64,12 @@ request = "list statistics show SBLSRVR_NAME, STAT_NAME, SD_DESC, CURR_VAL"
 context = "list_statistics_server"
 labels = [ "SBLSRVR_NAME", "STAT_NAME", "SD_DESC" ]
 [metric.metricsdesc]
-CURR_VAL = "Statistic value"
+CURR_VAL = "Statistic current value."
+
+
+[[metric]]
+request = "list state values show SBLSRVR_NAME, STATEVAL_NAME, VD_DESC, CURR_VAL"
+context = "list_state_values_server"
+labels = [ "SBLSRVR_NAME", "STATEVAL_NAME", "VD_DESC" ]
+[metric.metricsdesc]
+CURR_VAL = "State Value current value."

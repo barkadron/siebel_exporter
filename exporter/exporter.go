@@ -457,6 +457,9 @@ func getSpacerLength(s string) int {
 }
 
 func convertDateStringToTimestamp(s string, dateFormat string) string {
+	if s == "0000-00-00 00:00:00" {
+		return "0"
+	}
 	t, err := time.Parse(dateFormat, s)
 	if err != nil {
 		return s
