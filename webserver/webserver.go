@@ -27,6 +27,7 @@ func StartWebServer(ctx context.Context, listenAddress string, telemetryPath str
 	httpServer := &http.Server{
 		Addr:         listenAddress,
 		Handler:      mux,
+		ErrorLog:     log.NewErrorLogger(),
 		ReadTimeout:  time.Second * time.Duration(readTimeout),
 		WriteTimeout: time.Second * time.Duration(writeTimeout),
 		IdleTimeout:  time.Second * time.Duration(idleTimeout),
