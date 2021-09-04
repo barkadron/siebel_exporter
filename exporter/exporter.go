@@ -57,7 +57,6 @@ type Exporter struct {
 	totalScrapes         prometheus.Counter
 	scrapeErrors         *prometheus.CounterVec
 	gatewayServerUp      prometheus.Gauge
-	// appServerUp     prometheus.Gauge
 }
 
 // NewExporter returns a new Siebel exporter for the provided args.
@@ -114,12 +113,6 @@ func NewExporter(namespace, subsystem, defaultMetricsFile, customMetricsFile, da
 			Help:      "Whether the Siebel Gateway Server is up (1 for up, 0 for down).",
 			// ConstLabels: labels,
 		}),
-		// appServerUp: prometheus.NewGauge(prometheus.GaugeOpts{
-		// 	Namespace:   namespace,
-		// 	Name:        "application_server_up",
-		// 	Help:        "Whether the Siebel Application Server is up (1 for up, 0 for down).",
-		// 	ConstLabels: labels,
-		// }),
 	}
 }
 
@@ -156,7 +149,6 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	ch <- e.error
 	e.scrapeErrors.Collect(ch)
 	ch <- e.gatewayServerUp
-	// ch <- e.appServerUp
 }
 
 func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
@@ -191,16 +183,6 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		}
 		e.gatewayServerUp.Set(1)
 	}
-
-	/*
-		// Detecting Siebel Application Server is up or down
-		if appServerState := e.srvrmgr.pingApplicationServer(); !appServerState {
-			log.Warnln("Application Server is down.")
-			e.appServerUp.Set(0)
-			return
-		}
-		e.appServerUp.Set(1)
-	*/
 
 	if checkIfMetricsChanged(&e.customMetricsFile) {
 		log.Infoln("Metrics changed, reload it.")

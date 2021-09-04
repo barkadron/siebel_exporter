@@ -25,7 +25,6 @@ type SrvrMgr interface {
 	ExecuteCommand(cmd string) (string, error)
 	GetApplicationServerName() string
 	PingGatewayServer() bool
-	// PingApplicationServer() bool
 }
 
 func NewSrvrmgr(connectCmd string, shell shell.Shell) SrvrMgr {
@@ -84,35 +83,7 @@ func (sm *srvrMgr) PingGatewayServer() bool {
 	}
 	log.Debugln("Successfully pinged Siebel Gateway Server.")
 	return true // Up
-
-	/* It is possible to check status of Gateway Server if gtwsrvr and siebsrvr installed on the same machine.
-	Checking the Status of the Siebel Gateway Name Server System Service on UNIX: https://docs.oracle.com/cd/E74890_01/books/SystAdm/systadm_srvrsyssrvc5002.htm#sthref178
-	Example:
-	$ source /siebel/ses/gtwysrvr/siebenv.sh && start_ns
-	$ started at Mon Jul  5 16:10:33 2021, pid: 17465, autostart: no
-	$ stopped at Mon Jul  5 16:10:18 2021
-	*/
 }
-
-/*
-func (srvrmgr *SRVRMGR) PingApplicationServer() bool {
-	log.Debugln("pingApplicationServer...")
-	result, err := srvrmgr.executeCommand("list servers show SBLSRVR_STATE")
-	if err != nil {
-		log.Errorln("Error pinging Siebel Application Server.", err)
-		return false // Down
-	}
-	if strings.Contains(result, "Running") {
-		log.Debugln("Successfully pinged Siebel Application Server.")
-		return true // Up
-	} else {
-		log.Errorln("Error pinging Siebel Application Server.", result)
-		return false // Down
-	}
-
-	// https://docs.oracle.com/cd/B40099_02/books/SysDiag/SysDiagSysMonitor2.html
-}
-*/
 
 /***********************
 *** internal methods ***
