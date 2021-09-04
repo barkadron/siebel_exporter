@@ -25,13 +25,13 @@ request = "list comp show SV_NAME, CC_ALIAS, CP_DISP_RUN_STATE, CP_NUM_RUN_TASKS
 context = "list_comp"
 labels = [ "SV_NAME", "CC_ALIAS" ]
 [metric.valuemap.CP_DISP_RUN_STATE] # https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor4.html#wp1036510
-Unavailable = "1"
-Shutdown = "2"
-"Shutting Down" = "3"
-Offline = "4"
-"Starting Up" = "5"
-Online = "6"
-Running = "7"
+"Starting Up" = "1"
+"Online" = "2"
+"Running" = "3"
+"Offline" = "4"
+"Shutting Down" = "5"
+"Shutdown" = "6"
+"Unavailable" = "7"
 [metric.metricsdesc]
 CP_DISP_RUN_STATE = "The current state of the component."
 CP_NUM_RUN_TASKS = "The current number of running tasks for the component."
