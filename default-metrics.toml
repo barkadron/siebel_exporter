@@ -21,6 +21,23 @@ END_TIME = "Time the server was stopped."
 
 
 [[metric]]
+request = "list component groups show SV_NAME, CG_NAME, CA_RUN_STATE, CG_NUM_COMPONENTS"
+context = "list_compgroup"
+labels = [ "SV_NAME", "CG_NAME" ]
+[metric.metricsdesc]
+CA_RUN_STATE = "State of the Component Group."
+CG_NUM_COMPONENTS = "Number of components in the Component Group."
+[metric.valuemap.CA_RUN_STATE] # https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor3.html#wp1047134
+"Online" = "1"
+"Running" = "2"
+"Shutdown" = "3"
+"Part shutdown" = "4"
+"Offline" = "5"
+"Part offline" = "6"
+"Starting up" = "7"
+
+
+[[metric]]
 request = "list comp show SV_NAME, CC_ALIAS, CP_DISP_RUN_STATE, CP_NUM_RUN_TASKS, CP_MAX_TASKS, CP_ACTV_MTS_PROCS, CP_MAX_MTS_PROCS, CP_START_TIME, CP_END_TIME"
 context = "list_comp"
 labels = [ "SV_NAME", "CC_ALIAS" ]
