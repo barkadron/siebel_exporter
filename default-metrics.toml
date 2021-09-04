@@ -57,3 +57,11 @@ CP_END_TIME = "The time when component ended."
 "Shutting Down" = "5"
 "Shutdown" = "6"
 "Unavailable" = "7"
+
+
+[[metric]]
+request = "list statistics show SBLSRVR_NAME, STAT_NAME, SD_DESC, CURR_VAL"
+context = "list_statistics_server"
+labels = [ "SBLSRVR_NAME", "STAT_NAME", "SD_DESC" ]
+[metric.metricsdesc]
+CURR_VAL = "Statistic value"
