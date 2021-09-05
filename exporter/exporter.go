@@ -19,24 +19,26 @@ import (
 	"github.com/prometheus/common/log"
 )
 
-// Metrics to scrap. Use external file (default-metrics.toml and custom if provided)
-var (
-	metricsToScrap    Metrics
-	additionalMetrics Metrics
-	hashMap           = make(map[int][]byte)
-)
+// Default metrics to scrap. Use external file (default-metrics.toml)
+var defaultMetrics Metrics
 
-// Metrics object description
+// Custom metrics to scrap. Use custom external file (if provided)
+var customMetrics Metrics
+
+// Metrics Files HashMap
+var metricsFilesHashMap = make(map[int][]byte)
+
+// Metrics object definition
 type Metric struct {
-	Context          string
-	Labels           []string
-	MetricsDesc      map[string]string
-	MetricsType      map[string]string
-	MetricsBuckets   map[string]map[string]string
-	FieldToAppend    string
-	Request          string
-	IgnoreZeroResult bool
+	Command          string
+	Subsystem        string
+	Help             map[string]string
+	Type             map[string]string
+	Buckets          map[string]map[string]string
 	ValueMap         map[string]map[string]string
+	Labels           []string
+	FieldToAppend    string
+	IgnoreZeroResult bool
 }
 
 // Used to load multiple metrics from file
@@ -61,7 +63,7 @@ type Exporter struct {
 
 // NewExporter returns a new Siebel exporter for the provided args.
 func NewExporter(namespace, subsystem, defaultMetricsFile, customMetricsFile, dateFormat, emptyMetricsOverride string, srvrmgr srvrmgr.SrvrMgr) *Exporter {
-	// log.Infoln("Creating new Exporter...")
+	log.Debugln("NewExporter")
 
 	// Load default and custom metrics
 	reloadMetrics(&defaultMetricsFile, &customMetricsFile)
@@ -143,6 +145,7 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect implements prometheus.Collector.
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
+	log.Debugln("Exporter.Collect")
 	e.scrape(ch)
 	ch <- e.duration
 	ch <- e.totalScrapes
@@ -166,7 +169,7 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 	}(time.Now())
 
 	// If not connected, then trying to reconnect
-	if !e.srvrmgr.IsConnected() {
+	if !e.srvrmgr.IsConnected() { // @FIXME: potential bug
 		if err = e.srvrmgr.Reconnect(); err != nil {
 			// log.Errorln(err)
 			e.gatewayServerUp.Set(0)
@@ -189,204 +192,164 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		reloadMetrics(&e.defaultMetricsFile, &e.customMetricsFile)
 	}
 
-	for _, metric := range metricsToScrap.Metric {
+	for _, metric := range defaultMetrics.Metric {
 		log.Debugln("About to scrape metric: ")
-		log.Debugln("	- Metric MetricsDesc: ", metric.MetricsDesc)
-		log.Debugln("	- Metric Context: ", metric.Context)
-		log.Debugln("	- Metric MetricsType: ", metric.MetricsType)
-		log.Debugln("	- Metric MetricsBuckets: ", metric.MetricsBuckets, "(Ignored unless Histogram type)")
+		log.Debugln("	- Metric Command: ", metric.Command)
+		log.Debugln("	- Metric Subsystem: ", metric.Subsystem)
+		log.Debugln("	- Metric Help: ", metric.Help)
+		log.Debugln("	- Metric Type: ", metric.Type)
+		log.Debugln("	- Metric Buckets: ", metric.Buckets, "(Ignored unless histogram type)")
+		log.Debugln("	- Metric ValueMap: ", metric.ValueMap)
 		log.Debugln("	- Metric Labels: ", metric.Labels)
 		log.Debugln("	- Metric FieldToAppend: ", metric.FieldToAppend)
 		log.Debugln("	- Metric IgnoreZeroResult: ", metric.IgnoreZeroResult)
-		log.Debugln("	- Metric ValueMap: ", metric.ValueMap)
-		log.Debugln("	- Metric Request: ", metric.Request)
 
-		if len(metric.Request) == 0 {
-			log.Errorln("Error scraping for ", metric.MetricsDesc, ". Did you forget to define request in your toml file?")
+		if len(metric.Command) == 0 {
+			log.Errorln("Error scraping for '" + fmt.Sprintf("%+v", metric.Help) + "'. Did you forget to define 'command' in your toml file?")
 			return
 		}
 
-		if len(metric.MetricsDesc) == 0 {
-			log.Errorln("Error scraping for request", metric.Request, ". Did you forget to define metricsdesc in your toml file?")
+		if len(metric.Help) == 0 {
+			log.Errorln("Error scraping for command '" + metric.Command + "'. Did you forget to define 'help' in your toml file?")
 			return
 		}
 
-		for column, metricType := range metric.MetricsType {
-			if metricType == "histogram" {
-				_, ok := metric.MetricsBuckets[column]
-				if !ok {
-					log.Errorln("Unable to find MetricsBuckets configuration key for metric. (metric=" + column + ")")
+		for columnName, metricType := range metric.Type {
+			if strings.ToLower(metricType) == "histogram" {
+				if len(metric.Buckets) == 0 {
+					log.Errorln("Error scraping for command '" + metric.Command + "'. Did you forget to define 'buckets' in your toml file?")
+					return
+				}
+				_, exists := metric.Buckets[columnName]
+				if !exists {
+					log.Errorln("Error scraping for command '" + metric.Command + "'. Unable to find buckets configuration key for metric '" + columnName + "'.")
 					return
 				}
 			}
 		}
 
 		scrapeStart := time.Now()
-		if err = ScrapeMetric(e.namespace, e.dateFormat, e.emptyMetricsOverride, e.srvrmgr, ch, metric); err != nil {
-			log.Errorln("Error scraping for", metric.Context, "_", metric.MetricsDesc, ":", err)
-			e.scrapeErrors.WithLabelValues(metric.Context).Inc()
+		if err = scrapeMetric(e.namespace, e.dateFormat, e.emptyMetricsOverride, e.srvrmgr, ch, metric); err != nil {
+			log.Errorln("Error scraping for '" + metric.Subsystem + "', '" + fmt.Sprintf("%+v", metric.Help) + "' :\n" + err.Error())
+			e.scrapeErrors.WithLabelValues(metric.Subsystem).Inc()
 		} else {
-			log.Debugln("Successfully scraped metric: ", metric.Context, metric.MetricsDesc, time.Since(scrapeStart))
+			log.Debugln("Successfully scraped metric. '" + metric.Subsystem + "', " + fmt.Sprintf("%+v", metric.Help) + "'. Time: '" + time.Since(scrapeStart).String() + "'.")
 		}
 	}
-}
-
-func GetMetricType(metricType string, metricsType map[string]string) prometheus.ValueType {
-	var strToPromType = map[string]prometheus.ValueType{
-		"gauge":     prometheus.GaugeValue,
-		"counter":   prometheus.CounterValue,
-		"histogram": prometheus.UntypedValue,
-	}
-
-	strType, ok := metricsType[strings.ToLower(metricType)]
-	if !ok {
-		return prometheus.GaugeValue
-	}
-	valueType, ok := strToPromType[strings.ToLower(strType)]
-	if !ok {
-		panic(errors.New("Error while getting prometheus type " + strings.ToLower(strType)))
-	}
-	return valueType
 }
 
 // interface method to call ScrapeGenericValues using Metric struct values
-func ScrapeMetric(namespace string, dateFormat string, overrideEmptyMetricsValue string, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric, metricDefinition Metric) error {
-	return ScrapeGenericValues(namespace, dateFormat, overrideEmptyMetricsValue, srvrmgr, ch, metricDefinition.Context, metricDefinition.Labels,
-		metricDefinition.MetricsDesc, metricDefinition.MetricsType, metricDefinition.MetricsBuckets, metricDefinition.FieldToAppend,
-		metricDefinition.IgnoreZeroResult, metricDefinition.ValueMap, metricDefinition.Request)
+func scrapeMetric(namespace string, dateFormat string, emptyMetricsOverride string, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric, metricDefinition Metric) error {
+	return scrapeGenericValues(namespace, dateFormat, emptyMetricsOverride, srvrmgr, ch, metricDefinition.Subsystem, metricDefinition.Labels,
+		metricDefinition.Help, metricDefinition.Type, metricDefinition.Buckets, metricDefinition.FieldToAppend,
+		metricDefinition.IgnoreZeroResult, metricDefinition.ValueMap, metricDefinition.Command)
 }
 
 // generic method for retrieving metrics.
-func ScrapeGenericValues(namespace string, dateFormat string, overrideEmptyMetricsValue string, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric, context string, labels []string,
-	metricsDesc map[string]string, metricsType map[string]string, metricsBuckets map[string]map[string]string, fieldToAppend string, ignoreZeroResult bool, valueMap map[string]map[string]string, request string) error {
+func scrapeGenericValues(namespace string, dateFormat string, emptyMetricsOverride string, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric, metricSubsystem string, labels []string,
+	metricsHelp map[string]string, metricsTypes map[string]string, metricsBuckets map[string]map[string]string, fieldToAppend string, ignoreZeroResult bool, valueMap map[string]map[string]string, command string) error {
 	metricsCount := 0
-	genericParser := func(row map[string]string) error {
-		log.Debugln("genericParser | row map:\n", row)
-		// Construct labels value
+	dataRowToPrometheusMetricConverter := func(row map[string]string) error {
+		log.Debugln("dataRowToPrometheusMetricConverter")
+		log.Debugln("	- row map : '" + fmt.Sprintf("%+v", row) + "'")
+
+		// Construct labels name and value
+		labelsNamesCleaned := []string{}
 		labelsValues := []string{}
-		for _, label := range labels {
-			labelsValues = append(labelsValues, row[label])
+		if strings.Compare(fieldToAppend, "") == 0 { // @TODO: for what???
+			for _, label := range labels {
+				labelsNamesCleaned = append(labelsNamesCleaned, cleanName(label))
+				labelsValues = append(labelsValues, row[label])
+			}
 		}
 		// Construct Prometheus values to sent back
-		for metric, metricHelp := range metricsDesc {
-			value := row[metric]
+		for metricName, metricHelp := range metricsHelp {
+			metricType := getMetricType(metricName, metricsTypes)
+			metricNameCleaned := cleanName(metricName)
+			if strings.Compare(fieldToAppend, "") != 0 {
+				metricNameCleaned = cleanName(row[fieldToAppend])
+			}
+			metricValue := row[metricName]
 			// Value mapping
-			if val1, exists1 := valueMap[metric]; exists1 {
-				if val2, exists2 := val1[value]; exists2 {
-					log.Debugln("[ValueMap]: Value '" + value + "' converted to '" + val2 + "'.")
-					value = val2
+			if val1, exists1 := valueMap[metricName]; exists1 {
+				if val2, exists2 := val1[metricValue]; exists2 {
+					log.Debugln("	- [ValueMap]: Value '" + metricValue + "' converted to '" + val2 + "'.")
+					metricValue = val2
 				}
 			}
 			// If not a float, skip current metric
-			parsedValue, err := strconv.ParseFloat(value, 64)
+			metricValueParsed, err := strconv.ParseFloat(metricValue, 64)
 			if err != nil {
-				log.Errorln("Unable to convert current value to float (metric=" + metric + ",metricHelp=" + metricHelp + ",value=<" + value + ">)")
+				log.Errorln("Unable to convert current value to float (metricName='" + metricName + "', value='" + metricValue + "', metricHelp='" + metricHelp + "').")
 				continue
 			}
-			log.Debugln("Request result looks like: [", metric, "] : ", parsedValue)
-			// If metric do not use a field content in metric's name
-			if strings.Compare(fieldToAppend, "") == 0 {
-				promLabels := []string{}
-				for _, label := range labels {
-					promLabels = append(promLabels, strings.ToLower(label))
-				}
-				desc := prometheus.NewDesc(
-					prometheus.BuildFQName(namespace, context, cleanName(metric)),
-					metricHelp,
-					promLabels,
-					nil,
-				)
-				if metricsType[strings.ToLower(metric)] == "histogram" {
-					count, err := strconv.ParseUint(strings.TrimSpace(row["count"]), 10, 64)
-					if err != nil {
-						log.Errorln("Unable to convert count value to int (metric=" + metric + ",metricHelp=" + metricHelp + ",value=<" + row["count"] + ">)")
-						continue
-					}
-					buckets := make(map[float64]uint64)
-					for field, le := range metricsBuckets[metric] {
-						lelimit, err := strconv.ParseFloat(strings.TrimSpace(le), 64)
-						if err != nil {
-							log.Errorln("Unable to convert bucket limit value to float (metric=" + metric + ",metricHelp=" + metricHelp + ",bucketlimit=<" + le + ">)")
-							continue
-						}
-						counter, err := strconv.ParseUint(strings.TrimSpace(row[field]), 10, 64)
-						if err != nil {
-							log.Errorln("Unable to convert ", field, " value to int (metric="+metric+",metricHelp="+metricHelp+",value=<"+row[field]+">)")
-							continue
-						}
-						buckets[lelimit] = counter
-					}
-					ch <- prometheus.MustNewConstHistogram(desc, count, parsedValue, buckets, labelsValues...)
-				} else {
-					ch <- prometheus.MustNewConstMetric(desc, GetMetricType(metric, metricsType), parsedValue, labelsValues...)
-				}
-				// If no labels, use metric name
+
+			promMetricDesc := prometheus.NewDesc(prometheus.BuildFQName(namespace, metricSubsystem, metricNameCleaned), metricHelp, labelsNamesCleaned, nil)
+
+			if metricType == prometheus.GaugeValue || metricType == prometheus.CounterValue {
+				log.Debugln("	- Converting result looks like: [" + metricNameCleaned + "] : '" + fmt.Sprintf("%g", metricValueParsed) + "'.")
+				ch <- prometheus.MustNewConstMetric(promMetricDesc, metricType, metricValueParsed, labelsValues...)
 			} else {
-				desc := prometheus.NewDesc(
-					prometheus.BuildFQName(namespace, context, cleanName(row[fieldToAppend])),
-					metricHelp,
-					nil,
-					nil,
-				)
-				if metricsType[strings.ToLower(metric)] == "histogram" {
-					count, err := strconv.ParseUint(strings.TrimSpace(row["count"]), 10, 64)
+				count, err := strconv.ParseUint(strings.TrimSpace(row["count"]), 10, 64)
+				if err != nil {
+					log.Errorln("Unable to convert count value to int (metricName='" + metricName + "', value='" + row["count"] + "', metricHelp='" + metricHelp + "').")
+					continue
+				}
+				buckets := make(map[float64]uint64)
+				for field, le := range metricsBuckets[metricName] {
+					lelimit, err := strconv.ParseFloat(strings.TrimSpace(le), 64)
 					if err != nil {
-						log.Errorln("Unable to convert count value to int (metric=" + metric + ",metricHelp=" + metricHelp + ",value=<" + row["count"] + ">)")
+						log.Errorln("Unable to convert bucket limit value to float (metricName='" + metricName + "', bucketlimit='" + le + "', metricHelp='" + metricHelp + "')")
 						continue
 					}
-					buckets := make(map[float64]uint64)
-					for field, le := range metricsBuckets[metric] {
-						lelimit, err := strconv.ParseFloat(strings.TrimSpace(le), 64)
-						if err != nil {
-							log.Errorln("Unable to convert bucket limit value to float (metric=" + metric + ",metricHelp=" + metricHelp + ",bucketlimit=<" + le + ">)")
-							continue
-						}
-						counter, err := strconv.ParseUint(strings.TrimSpace(row[field]), 10, 64)
-						if err != nil {
-							log.Errorln("Unable to convert ", field, " value to int (metric="+metric+",metricHelp="+metricHelp+",value=<"+row[field]+">)")
-							continue
-						}
-						buckets[lelimit] = counter
+					counter, err := strconv.ParseUint(strings.TrimSpace(row[field]), 10, 64)
+					if err != nil {
+						log.Errorln("Unable to convert <" + field + "> value to int (metricName='" + metricName + "', value='" + row[field] + "', metricHelp='" + metricHelp + "')")
+						continue
 					}
-					ch <- prometheus.MustNewConstHistogram(desc, count, parsedValue, buckets)
-				} else {
-					ch <- prometheus.MustNewConstMetric(desc, GetMetricType(metric, metricsType), parsedValue)
+					buckets[lelimit] = counter
 				}
+				log.Debugln("	- Converting result looks like: [" + metricNameCleaned + "] : '" + fmt.Sprintf("%g", metricValueParsed) + "', count: '" + fmt.Sprint(count) + ", buckets: '" + fmt.Sprintf("%+v", buckets) + "'.")
+				ch <- prometheus.MustNewConstHistogram(promMetricDesc, count, metricValueParsed, buckets, labelsValues...)
 			}
 			metricsCount++
 		}
 		return nil
 	}
-	err := GeneratePrometheusMetrics(srvrmgr, genericParser, request, dateFormat, overrideEmptyMetricsValue)
-	log.Debugln("ScrapeGenericValues() - metricsCount: ", metricsCount)
+
+	err := generatePrometheusMetrics(srvrmgr, dataRowToPrometheusMetricConverter, command, dateFormat, emptyMetricsOverride)
+	log.Debugln("ScrapeGenericValues | metricsCount: " + fmt.Sprint(metricsCount))
 	if err != nil {
 		return err
 	}
 	if !ignoreZeroResult && metricsCount == 0 {
-		return errors.New("no metrics found while parsing")
+		return errors.New("ERROR! No metrics found while parsing. Metrics Count: '" + fmt.Sprint(metricsCount) + "'.")
 	}
+
 	return err
 }
 
 // Parse srvrmgr result and call parsing function to each row
-func GeneratePrometheusMetrics(srvrmgr srvrmgr.SrvrMgr, parse func(row map[string]string) error, request string, dateFormat string, overrideEmptyMetricsValue string) error {
-	commandResult, err := srvrmgr.ExecuteCommand(request)
+func generatePrometheusMetrics(srvrmgr srvrmgr.SrvrMgr, dataRowToPrometheusMetricConverter func(row map[string]string) error, command string, dateFormat string, emptyMetricsOverride string) error {
+	log.Debugln("generatePrometheusMetrics")
 
+	commandResult, err := srvrmgr.ExecuteCommand(command)
 	if err != nil {
 		return err
 	}
 
+	// Check and parse srvrmgr output...
 	lines := strings.Split(commandResult, "\n")
 	if len(lines) < 3 {
-		return errors.New("ERROR! Command output is not valid: '" + commandResult + "'")
+		return errors.New("ERROR! Command output is not valid: '" + commandResult + "'.")
 	}
 
 	columnsRow := lines[0]
 	separatorsRow := lines[1]
-	dataRows := lines[2:]
+	rawDataRows := lines[2:]
 
 	// Get column names
-	columns := strings.Split(trimHeadRow(columnsRow), " ")
+	columnsNames := strings.Split(trimHeadRow(columnsRow), " ")
 
 	// Get column max lengths (calc from separator length)
 	spacerLength := getSpacerLength(separatorsRow)
@@ -398,45 +361,61 @@ func GeneratePrometheusMetrics(srvrmgr srvrmgr.SrvrMgr, parse func(row map[strin
 
 	// Parse data-rows
 	log.Debugln("Parsing rows with data...")
-	// rowCount := len(dataRows)
-	// for i, row := range dataRows {
-	for _, row := range dataRows {
-		log.Debugln(" - row: '" + row + "'")
+	for _, rawRow := range rawDataRows {
+		log.Debugln("	- raw row: '" + rawRow + "'.")
 
-		dataMap := make(map[string]string)
-		rowLen := len(row)
-		for j, colName := range columns {
-			colMaxLen := lengths[j]
+		parsedRow := make(map[string]string)
+		rowLen := len(rawRow)
+		for colIndex, colName := range columnsNames {
+			colMaxLen := lengths[colIndex]
 			if colMaxLen > rowLen {
 				colMaxLen = rowLen
 			}
-			val := strings.TrimSpace(row[:colMaxLen])
+			colValue := strings.TrimSpace(rawRow[:colMaxLen])
 
 			// If value is empty then set it to default "0"
-			if len(val) == 0 && len(overrideEmptyMetricsValue) > 0 {
-				val = overrideEmptyMetricsValue
+			if len(colValue) == 0 && len(emptyMetricsOverride) > 0 {
+				colValue = emptyMetricsOverride
 			}
 
 			// Try to convert date-string to Unix timestamp
-			if len(val) == len(dateFormat) {
-				val = convertDateStringToTimestamp(val, dateFormat)
+			if len(colValue) == len(dateFormat) {
+				colValue = convertDateStringToTimestamp(colValue, dateFormat)
 			}
 
-			// dataMap[strings.ToLower(colName)] = val
-			dataMap[colName] = val
+			// dataMap[strings.ToLower(colName)] = colValue
+			parsedRow[colName] = colValue
 
 			// Cut off used value from row
-			row = row[colMaxLen:]
-			rowLen = len(row)
+			rawRow = rawRow[colMaxLen:]
+			rowLen = len(rawRow)
 		}
 
-		// Call parser function to parse datamap of row
-		if err := parse(dataMap); err != nil {
+		// Convert parsed row to Prometheus Metric
+		if err := dataRowToPrometheusMetricConverter(parsedRow); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+func getMetricType(metricName string, metricsTypes map[string]string) prometheus.ValueType {
+	var strToPromType = map[string]prometheus.ValueType{
+		"gauge":     prometheus.GaugeValue,
+		"counter":   prometheus.CounterValue,
+		"histogram": prometheus.UntypedValue,
+	}
+	strType, exists := metricsTypes[metricName]
+	if !exists {
+		return prometheus.GaugeValue
+	}
+	strType = strings.ToLower(strType)
+	valueType, exists := strToPromType[strType]
+	if !exists {
+		panic(errors.New("Error while getting prometheus type for '" + strType + "'."))
+	}
+	return valueType
 }
 
 func trimHeadRow(s string) string {
@@ -507,9 +486,9 @@ func checkIfMetricsChanged(customMetricsFile *string) bool {
 			break
 		}
 		// If any of files has been changed reload metrics
-		if !bytes.Equal(hashMap[i], h.Sum(nil)) {
+		if !bytes.Equal(metricsFilesHashMap[i], h.Sum(nil)) {
 			log.Infoln(_customMetrics, "has been changed. Reloading metrics...")
-			hashMap[i] = h.Sum(nil)
+			metricsFilesHashMap[i] = h.Sum(nil)
 			result = true
 			break
 		}
@@ -525,11 +504,11 @@ func checkIfMetricsChanged(customMetricsFile *string) bool {
 }
 
 func reloadMetrics(defaultMetricsFile, customMetricsFile *string) {
-	// Truncate metricsToScrap
-	metricsToScrap.Metric = []Metric{}
+	// Truncate defaultMetrics
+	defaultMetrics.Metric = []Metric{}
 
 	// Load default metrics
-	if _, err := toml.DecodeFile(*defaultMetricsFile, &metricsToScrap); err != nil {
+	if _, err := toml.DecodeFile(*defaultMetricsFile, &defaultMetrics); err != nil {
 		log.Errorln(err)
 		panic(errors.New("Error while loading " + *defaultMetricsFile))
 	} else {
@@ -539,13 +518,13 @@ func reloadMetrics(defaultMetricsFile, customMetricsFile *string) {
 	// If custom metrics, load it
 	if strings.Compare(*customMetricsFile, "") != 0 {
 		for _, _customMetrics := range strings.Split(*customMetricsFile, ",") {
-			if _, err := toml.DecodeFile(_customMetrics, &additionalMetrics); err != nil {
+			if _, err := toml.DecodeFile(_customMetrics, &customMetrics); err != nil {
 				log.Errorln(err)
 				panic(errors.New("Error while loading " + _customMetrics))
 			} else {
 				log.Infoln("Successfully loaded custom metrics from: " + _customMetrics)
 			}
-			metricsToScrap.Metric = append(metricsToScrap.Metric, additionalMetrics.Metric...)
+			defaultMetrics.Metric = append(defaultMetrics.Metric, customMetrics.Metric...)
 		}
 	} else {
 		log.Infoln("No custom metrics defined.")

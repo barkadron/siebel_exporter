@@ -1,12 +1,12 @@
 [[metric]]
-request = "list server show SBLSRVR_NAME, SBLSRVR_STATE, START_TIME, END_TIME"
-context = "list_server"
+command = "list server show SBLSRVR_NAME, SBLSRVR_STATE, START_TIME, END_TIME"
+subsystem = "list_server"
 labels = [ "SBLSRVR_NAME" ]
-[metric.metricsdesc]
+[metric.help]
 SBLSRVR_STATE = "State of the Siebel Application Server."
-START_TIME = "Time the server was started."
-END_TIME = "Time the server was stopped."
-[metric.valuemap.SBLSRVR_STATE] # https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor2.html#wp1034139
+START_TIME = "Time the Siebel Application Server was started."
+END_TIME = "Time the Siebel Application Server was stopped."
+[metric.valuemap.SBLSRVR_STATE] # Sort according to doc - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor2.html#wp1034139
 "Starting Up" = "1"
 "Running" = "2"
 "Shutting Down" = "3"
@@ -21,13 +21,13 @@ END_TIME = "Time the server was stopped."
 
 
 [[metric]]
-request = "list component groups show SV_NAME, CG_NAME, CA_RUN_STATE, CG_NUM_COMPONENTS"
-context = "list_compgroup"
+command = "list component groups show SV_NAME, CG_NAME, CA_RUN_STATE, CG_NUM_COMPONENTS"
+subsystem = "list_compgroup"
 labels = [ "SV_NAME", "CG_NAME" ]
-[metric.metricsdesc]
+[metric.help]
 CA_RUN_STATE = "State of the Component Group."
 CG_NUM_COMPONENTS = "Number of components in the Component Group."
-[metric.valuemap.CA_RUN_STATE] # https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor3.html#wp1047134
+[metric.valuemap.CA_RUN_STATE] # Sort according to doc - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor3.html#wp1047134
 "Online" = "1"
 "Running" = "2"
 "Shutdown" = "3"
@@ -38,18 +38,18 @@ CG_NUM_COMPONENTS = "Number of components in the Component Group."
 
 
 [[metric]]
-request = "list comp show SV_NAME, CC_ALIAS, CP_DISP_RUN_STATE, CP_NUM_RUN_TASKS, CP_MAX_TASKS, CP_ACTV_MTS_PROCS, CP_MAX_MTS_PROCS, CP_START_TIME, CP_END_TIME"
-context = "list_comp"
+command = "list comp show SV_NAME, CC_ALIAS, CP_DISP_RUN_STATE, CP_NUM_RUN_TASKS, CP_MAX_TASKS, CP_ACTV_MTS_PROCS, CP_MAX_MTS_PROCS, CP_START_TIME, CP_END_TIME"
+subsystem = "list_comp"
 labels = [ "SV_NAME", "CC_ALIAS" ]
-[metric.metricsdesc]
-CP_DISP_RUN_STATE = "The current state of the component."
-CP_NUM_RUN_TASKS = "The current number of running tasks for the component."
-CP_MAX_TASKS = "The maximum number of running tasks for the component."
-CP_ACTV_MTS_PROCS = "The current number of running multi-threaded shell (MTS) processes for the component."
-CP_MAX_MTS_PROCS = "The maximum number of running multi-threaded shell (MTS) processes for the component."
-CP_START_TIME = "The time when component started."
-CP_END_TIME = "The time when component ended."
-[metric.valuemap.CP_DISP_RUN_STATE] # https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor4.html#wp1036510
+[metric.help]
+CP_DISP_RUN_STATE = "Current state of the Component."
+CP_NUM_RUN_TASKS = "Current number of running tasks for the Component."
+CP_MAX_TASKS = "Maximum number of running tasks for the Component."
+CP_ACTV_MTS_PROCS = "Current number of running multi-threaded shell (MTS) processes for the Component."
+CP_MAX_MTS_PROCS = "Maximum number of running multi-threaded shell (MTS) processes for the Component."
+CP_START_TIME = "Time the Component was started."
+CP_END_TIME = "Time the Component was ended."
+[metric.valuemap.CP_DISP_RUN_STATE] # Sort according to doc - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor4.html#wp1036510
 "Starting Up" = "1"
 "Online" = "2"
 "Running" = "3"
@@ -60,16 +60,16 @@ CP_END_TIME = "The time when component ended."
 
 
 [[metric]]
-request = "list statistics show SBLSRVR_NAME, STAT_NAME, SD_DESC, CURR_VAL"
-context = "list_statistics_server"
+command = "list statistics show SBLSRVR_NAME, STAT_NAME, SD_DESC, CURR_VAL"
+subsystem = "list_statistics_server"
 labels = [ "SBLSRVR_NAME", "STAT_NAME", "SD_DESC" ]
-[metric.metricsdesc]
-CURR_VAL = "Statistic current value."
+[metric.help]
+CURR_VAL = "Current value of the Siebel Application Server Statistic."
 
 
 [[metric]]
-request = "list state values show SBLSRVR_NAME, STATEVAL_NAME, VD_DESC, CURR_VAL"
-context = "list_state_values_server"
+command = "list state values show SBLSRVR_NAME, STATEVAL_NAME, VD_DESC, CURR_VAL"
+subsystem = "list_state_values_server"
 labels = [ "SBLSRVR_NAME", "STATEVAL_NAME", "VD_DESC" ]
-[metric.metricsdesc]
-CURR_VAL = "State Value current value."
+[metric.help]
+CURR_VAL = "Current value of the Siebel Application Server State Value."
