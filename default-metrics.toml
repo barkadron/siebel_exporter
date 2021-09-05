@@ -1,12 +1,12 @@
-[[metric]]
-command = "list server show SBLSRVR_NAME, SBLSRVR_STATE, START_TIME, END_TIME"
-subsystem = "list_server"
-labels = [ "SBLSRVR_NAME" ]
-[metric.help]
+[[Metric]]
+Command = "list server show SBLSRVR_NAME, SBLSRVR_STATE, START_TIME, END_TIME"
+Subsystem = "list_server"
+Labels = [ "SBLSRVR_NAME" ]
+[Metric.Help]
 SBLSRVR_STATE = "State of the Siebel Application Server."
 START_TIME = "Time the Siebel Application Server was started."
 END_TIME = "Time the Siebel Application Server was stopped."
-[metric.valuemap.SBLSRVR_STATE] # Sort according to doc - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor2.html#wp1034139
+[Metric.ValueMap.SBLSRVR_STATE] # Sort according to doc - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor2.html#wp1034139
 "Starting Up" = "1"
 "Running" = "2"
 "Shutting Down" = "3"
@@ -19,15 +19,14 @@ END_TIME = "Time the Siebel Application Server was stopped."
 "Login Failed" = "10"
 "Disconnected" = "11"
 
-
-[[metric]]
-command = "list component groups show SV_NAME, CG_NAME, CA_RUN_STATE, CG_NUM_COMPONENTS"
-subsystem = "list_compgroup"
-labels = [ "SV_NAME", "CG_NAME" ]
-[metric.help]
+[[Metric]]
+Command = "list component groups show SV_NAME, CG_NAME, CA_RUN_STATE, CG_NUM_COMPONENTS"
+Subsystem = "list_compgroup"
+Labels = [ "SV_NAME", "CG_NAME" ]
+[Metric.Help]
 CA_RUN_STATE = "State of the Component Group."
 CG_NUM_COMPONENTS = "Number of components in the Component Group."
-[metric.valuemap.CA_RUN_STATE] # Sort according to doc - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor3.html#wp1047134
+[Metric.ValueMap.CA_RUN_STATE] # Sort according to doc - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor3.html#wp1047134
 "Online" = "1"
 "Running" = "2"
 "Shutdown" = "3"
@@ -36,12 +35,11 @@ CG_NUM_COMPONENTS = "Number of components in the Component Group."
 "Part offline" = "6"
 "Starting up" = "7"
 
-
-[[metric]]
-command = "list comp show SV_NAME, CC_ALIAS, CP_DISP_RUN_STATE, CP_NUM_RUN_TASKS, CP_MAX_TASKS, CP_ACTV_MTS_PROCS, CP_MAX_MTS_PROCS, CP_START_TIME, CP_END_TIME"
-subsystem = "list_comp"
-labels = [ "SV_NAME", "CC_ALIAS" ]
-[metric.help]
+[[Metric]]
+Command = "list comp show SV_NAME, CC_ALIAS, CP_DISP_RUN_STATE, CP_NUM_RUN_TASKS, CP_MAX_TASKS, CP_ACTV_MTS_PROCS, CP_MAX_MTS_PROCS, CP_START_TIME, CP_END_TIME"
+Subsystem = "list_comp"
+Labels = [ "SV_NAME", "CC_ALIAS" ]
+[Metric.Help]
 CP_DISP_RUN_STATE = "Current state of the Component."
 CP_NUM_RUN_TASKS = "Current number of running tasks for the Component."
 CP_MAX_TASKS = "Maximum number of running tasks for the Component."
@@ -49,7 +47,7 @@ CP_ACTV_MTS_PROCS = "Current number of running multi-threaded shell (MTS) proces
 CP_MAX_MTS_PROCS = "Maximum number of running multi-threaded shell (MTS) processes for the Component."
 CP_START_TIME = "Time the Component was started."
 CP_END_TIME = "Time the Component was ended."
-[metric.valuemap.CP_DISP_RUN_STATE] # Sort according to doc - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor4.html#wp1036510
+[Metric.ValueMap.CP_DISP_RUN_STATE] # Sort according to doc - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor4.html#wp1036510
 "Starting Up" = "1"
 "Online" = "2"
 "Running" = "3"
@@ -58,24 +56,22 @@ CP_END_TIME = "Time the Component was ended."
 "Shutdown" = "6"
 "Unavailable" = "7"
 
-
-[[metric]]
-command = "list statistics show SBLSRVR_NAME, STAT_NAME, SD_DESC, CURR_VAL"
-subsystem = "list_statistics_server"
-labels = [ "SBLSRVR_NAME" ]
-fieldToAppend = "STAT_NAME"
-[metric.help]
+[[Metric]]
+Command = "list statistics show SBLSRVR_NAME, STAT_NAME, SD_DESC, CURR_VAL"
+Subsystem = "list_statistics_server"
+Labels = [ "SBLSRVR_NAME" ]
+FieldToAppend = "STAT_NAME"
+[Metric.Help]
 CURR_VAL = "Current value of the Siebel Application Server Statistic."
-[metric.HelpField]
+[Metric.HelpField]
 CURR_VAL = "SD_DESC"
 
-
-[[metric]]
-command = "list state values show SBLSRVR_NAME, STATEVAL_NAME, VD_DESC, CURR_VAL"
-subsystem = "list_state_values_server"
-labels = [ "SBLSRVR_NAME" ]
-fieldToAppend = "STATEVAL_NAME"
-[metric.help]
+[[Metric]]
+Command = "list state values show SBLSRVR_NAME, STATEVAL_NAME, VD_DESC, CURR_VAL"
+Subsystem = "list_state_values_server"
+Labels = [ "SBLSRVR_NAME" ]
+FieldToAppend = "STATEVAL_NAME"
+[Metric.Help]
 CURR_VAL = "Current value of the Siebel Application Server State Value."
-[metric.HelpField]
+[Metric.HelpField]
 CURR_VAL = "VD_DESC"
