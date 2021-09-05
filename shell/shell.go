@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 
@@ -159,8 +160,9 @@ func (s *shell) Terminate() error {
 func (s *shell) executeCommand(cmd string) (string, error) {
 	log.Debugln("shell.executeCommand")
 
-	// @TODO: check for '/p password' in command and replace with **** for log
-	log.Debugf("	'%s'", cmd)
+	// Check for '/p password' in command and remove it from log
+	cmdForLog := regexp.MustCompile(`(?i)(.*?\/p\s+)([^\s]+)(\s+.*|$)`).ReplaceAllString(cmd, "$1********$3")
+	log.Debugf("	'%s'", cmdForLog)
 
 	var (
 		cmdResult string = ""
