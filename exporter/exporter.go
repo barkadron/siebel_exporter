@@ -468,12 +468,10 @@ func convertDateStringToTimestamp(s string, dateFormat string) string {
 // If Siebel gives us some ugly names back, this function cleans it up for Prometheus.
 // https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
 func cleanName(s string) string {
-	// Trim spaces, tabs and new-lines
-	s = strings.Trim(s, " \n	")
-	// Remove other bad chars
-	s = regexp.MustCompile(`[^a-zA-Z0-9_]`).ReplaceAllString(s, "")
-	// Switch case to lower
-	s = strings.ToLower(s)
+	s = strings.TrimSpace(s)                                        // Trim spaces
+	s = strings.Replace(s, " ", "_", -1)                            // Remove spaces
+	s = regexp.MustCompile(`[^a-zA-Z0-9_]`).ReplaceAllString(s, "") // Remove other bad chars
+	s = strings.ToLower(s)                                          // Switch case to lower
 	return s
 }
 
