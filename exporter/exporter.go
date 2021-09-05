@@ -33,6 +33,7 @@ type Metric struct {
 	Command          string
 	Subsystem        string
 	Help             map[string]string
+	HelpField        map[string]string
 	Type             map[string]string
 	Buckets          map[string]map[string]string
 	ValueMap         map[string]map[string]string
@@ -205,6 +206,7 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		log.Debugln("	- Metric Command: ", metric.Command)
 		log.Debugln("	- Metric Subsystem: ", metric.Subsystem)
 		log.Debugln("	- Metric Help: ", metric.Help)
+		log.Debugln("	- Metric HelpField: ", metric.HelpField)
 		log.Debugln("	- Metric Type: ", metric.Type)
 		log.Debugln("	- Metric Buckets: ", metric.Buckets, "(Ignored unless histogram type)")
 		log.Debugln("	- Metric ValueMap: ", metric.ValueMap)
@@ -249,14 +251,15 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 
 // interface method to call ScrapeGenericValues using Metric struct values
 func scrapeMetric(namespace string, dateFormat string, emptyMetricsOverride string, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric, metricDefinition Metric) error {
-	return scrapeGenericValues(namespace, dateFormat, emptyMetricsOverride, srvrmgr, ch, metricDefinition.Subsystem, metricDefinition.Labels,
-		metricDefinition.Help, metricDefinition.Type, metricDefinition.Buckets, metricDefinition.FieldToAppend,
-		metricDefinition.IgnoreZeroResult, metricDefinition.ValueMap, metricDefinition.Command)
+	return scrapeGenericValues(namespace, dateFormat, emptyMetricsOverride, srvrmgr, ch,
+		metricDefinition.Subsystem, metricDefinition.Labels, metricDefinition.Help, metricDefinition.HelpField, metricDefinition.Type,
+		metricDefinition.Buckets, metricDefinition.FieldToAppend, metricDefinition.IgnoreZeroResult, metricDefinition.ValueMap, metricDefinition.Command)
 }
 
 // generic method for retrieving metrics.
-func scrapeGenericValues(namespace string, dateFormat string, emptyMetricsOverride string, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric, metricSubsystem string, labels []string,
-	metricsHelp map[string]string, metricsTypes map[string]string, metricsBuckets map[string]map[string]string, fieldToAppend string, ignoreZeroResult bool, valueMap map[string]map[string]string, command string) error {
+func scrapeGenericValues(namespace string, dateFormat string, emptyMetricsOverride string, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric,
+	metricSubsystem string, labels []string, metricsHelp map[string]string, metricsHelpField map[string]string, metricsTypes map[string]string,
+	metricsBuckets map[string]map[string]string, fieldToAppend string, ignoreZeroResult bool, valueMap map[string]map[string]string, command string) error {
 	metricsCount := 0
 	dataRowToPrometheusMetricConverter := func(row map[string]string) error {
 		log.Debugln("dataRowToPrometheusMetricConverter")
@@ -265,18 +268,25 @@ func scrapeGenericValues(namespace string, dateFormat string, emptyMetricsOverri
 		// Construct labels name and value
 		labelsNamesCleaned := []string{}
 		labelsValues := []string{}
-		if strings.Compare(fieldToAppend, "") == 0 { // @TODO: for what???
-			for _, label := range labels {
-				labelsNamesCleaned = append(labelsNamesCleaned, cleanName(label))
-				labelsValues = append(labelsValues, row[label])
-			}
+		// if strings.Compare(fieldToAppend, "") == 0 {
+		for _, label := range labels {
+			labelsNamesCleaned = append(labelsNamesCleaned, cleanName(label))
+			labelsValues = append(labelsValues, row[label])
 		}
+		// }
 		// Construct Prometheus values to sent back
 		for metricName, metricHelp := range metricsHelp {
 			metricType := getMetricType(metricName, metricsTypes)
 			metricNameCleaned := cleanName(metricName)
 			if strings.Compare(fieldToAppend, "") != 0 {
 				metricNameCleaned = cleanName(row[fieldToAppend])
+			}
+			// Dinamic help
+			if dinHelpName, exists1 := metricsHelpField[metricName]; exists1 {
+				if dinHelpValue, exists2 := row[dinHelpName]; exists2 {
+					log.Debugln("	- [DinamicHelp]: Help value '" + metricHelp + "' append with dinamic value '" + dinHelpValue + "'.")
+					metricHelp = metricHelp + " " + dinHelpValue
+				}
 			}
 			metricValue := row[metricName]
 			// Value mapping
@@ -459,10 +469,12 @@ func convertDateStringToTimestamp(s string, dateFormat string) string {
 func cleanName(s string) string {
 	s = strings.TrimSpace(s)             // Trim spaces
 	s = strings.Replace(s, " ", "_", -1) // Remove spaces
+	s = strings.Replace(s, "-", "_", -1) // Remove hyphens
 	s = strings.Replace(s, "(", "", -1)  // Remove open parenthesis
 	s = strings.Replace(s, ")", "", -1)  // Remove close parenthesis
 	s = strings.Replace(s, "/", "", -1)  // Remove forward slashes
 	s = strings.Replace(s, "*", "", -1)  // Remove asterisks
+	s = strings.Replace(s, "'", "", -1)  // Remove apostrophe
 	s = strings.ToLower(s)
 	return s
 }

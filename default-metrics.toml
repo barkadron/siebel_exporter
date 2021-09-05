@@ -62,14 +62,20 @@ CP_END_TIME = "Time the Component was ended."
 [[metric]]
 command = "list statistics show SBLSRVR_NAME, STAT_NAME, SD_DESC, CURR_VAL"
 subsystem = "list_statistics_server"
-labels = [ "SBLSRVR_NAME", "STAT_NAME", "SD_DESC" ]
+labels = [ "SBLSRVR_NAME" ]
+fieldToAppend = "STAT_NAME"
 [metric.help]
 CURR_VAL = "Current value of the Siebel Application Server Statistic."
+[metric.HelpField]
+CURR_VAL = "SD_DESC"
 
 
 [[metric]]
 command = "list state values show SBLSRVR_NAME, STATEVAL_NAME, VD_DESC, CURR_VAL"
 subsystem = "list_state_values_server"
-labels = [ "SBLSRVR_NAME", "STATEVAL_NAME", "VD_DESC" ]
+labels = [ "SBLSRVR_NAME" ]
+fieldToAppend = "STATEVAL_NAME"
 [metric.help]
 CURR_VAL = "Current value of the Siebel Application Server State Value."
+[metric.HelpField]
+CURR_VAL = "VD_DESC"
