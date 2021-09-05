@@ -62,10 +62,9 @@ func main() {
 	signalCh := make(chan os.Signal, 1)
 
 	// Listen to termination signals from the OS
+	log.Debugln("Listening for the termination signals from the OS and wait for graceful shutdown...")
 	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP, syscall.SIGQUIT)
 	go func() {
-		log.Debugln("Listening for the termination signals from the OS and wait for graceful shutdown.")
-
 		sig := <-signalCh
 		log.Infof("Caught sig: '%+v'. Gracefully shutting down...", sig)
 
@@ -75,11 +74,10 @@ func main() {
 		log.Info("	- Terminate web-server")
 		webCtxCancel()
 
+		// @TODO: need to wait for web-server close idle connections and then terminate srvrmgr
 		log.Info("	- Terminate srvrmgr")
-		if srvrMgr != nil && srvrMgr.IsConnected() {
-			if err := srvrMgr.Disconnect(); err != nil {
-				log.Errorf("Error on srvrmgr disconnect: %v", err)
-			}
+		if srvrMgr != nil {
+			srvrMgr.Disconnect()
 		}
 
 		log.Infof("	- Close %s", exporterName)

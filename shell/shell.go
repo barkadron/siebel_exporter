@@ -158,6 +158,8 @@ func (s *shell) Terminate() error {
 
 func (s *shell) executeCommand(cmd string) (string, error) {
 	log.Debugln("shell.executeCommand")
+
+	// @TODO: check for '/p password' in command and replace with **** for log
 	log.Debugf("	'%s'", cmd)
 
 	var (

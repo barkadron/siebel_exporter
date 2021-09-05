@@ -9,10 +9,22 @@ import (
 	"github.com/prometheus/common/log"
 )
 
+// Status is an enumeration of srvrmgr statuses that represent a simple value.
+type Status int
+
+// Possible values for the Status enum.
+const (
+	_ Status = iota
+	Disconnect
+	Connecting
+	Disconnecting
+	Connected
+)
+
 type srvrMgr struct {
 	connectCmd string
 	serverName string
-	connected  bool
+	status     Status
 	shell      shell.Shell
 }
 
@@ -21,7 +33,7 @@ type srvrMgr struct {
 type SrvrMgr interface {
 	Reconnect() error
 	Disconnect() error
-	IsConnected() bool
+	GetStatus() Status
 	ExecuteCommand(cmd string) (string, error)
 	GetApplicationServerName() string
 	PingGatewayServer() bool
@@ -37,10 +49,12 @@ func NewSrvrmgr(connectCmd string, shell shell.Shell) SrvrMgr {
 	// 	connectCmd = connectCmd + redirectSuffix
 	// }
 
+	// @TODO: check for '/q' in connectCmd
+
 	sm := &srvrMgr{
 		connectCmd: connectCmd,
 		serverName: "",
-		connected:  false,
+		status:     Disconnect,
 		shell:      shell,
 	}
 
@@ -49,8 +63,8 @@ func NewSrvrmgr(connectCmd string, shell shell.Shell) SrvrMgr {
 	return sm
 }
 
-func (sm *srvrMgr) IsConnected() bool {
-	return sm.connected
+func (sm *srvrMgr) GetStatus() Status {
+	return sm.status
 }
 
 func (sm *srvrMgr) Reconnect() error {
@@ -66,7 +80,8 @@ func (sm *srvrMgr) GetApplicationServerName() string {
 }
 
 func (sm *srvrMgr) ExecuteCommand(cmd string) (string, error) {
-	if strings.ToLower(strings.TrimSpace(cmd)) == "exit" {
+	cmd = strings.TrimSpace(cmd)
+	if strings.ToLower(cmd) == "exit" || strings.ToLower(cmd) == "quit" {
 		return "", sm.disconnect()
 	} else {
 		return sm.executeCommand(cmd)
@@ -91,12 +106,15 @@ func (sm *srvrMgr) PingGatewayServer() bool {
 
 func (sm *srvrMgr) connect() error {
 	log.Debugln("srvrmgr.connect")
-	if sm.connected {
+	if sm.status == Connected || sm.status == Connecting {
 		return nil
 	}
+
 	log.Infoln("Connecting to srvrmgr...")
+	sm.status = Connecting
 	connRes, err := sm.executeCommand(sm.connectCmd)
 	if err != nil {
+		sm.status = Disconnect
 		log.Errorln(err)
 		return err
 	}
@@ -105,7 +123,7 @@ func (sm *srvrMgr) connect() error {
 		serverNameMatch := regexp.MustCompile("srvrmgr:([^>]+?)>").FindStringSubmatch(connRes)
 		if len(serverNameMatch) >= 1 {
 			sm.serverName = serverNameMatch[1]
-			sm.connected = true
+			sm.status = Connected
 			log.Infoln("Successfully connected to server: ", sm.serverName)
 		} else {
 			return fmt.Errorf("error! siebel server name was not found: '%s'", connRes)
@@ -136,38 +154,35 @@ func (sm *srvrMgr) reconnect() error {
 	return nil
 }
 
-func (sm *srvrMgr) exit(closePipes bool) error {
+func (sm *srvrMgr) exit(closeShell bool) error { //@TODO: need refactoring (mb just close shell all the time?)
 	log.Debugln("srvrmgr.exit")
-	if !sm.connected {
+	if sm.status == Disconnect || sm.status == Disconnecting {
 		return nil
 	}
-	log.Infoln("Close srvrmgr connection...")
-	log.Debugln("closePipes: ", closePipes)
-	// output, err := s.executeCommand("exit")
-	// _, err := s.executeCommand("exit")
-	_, err := sm.executeCommand("quit")
+
+	log.Infoln("Disconnecting from srvrmgr...")
+	sm.status = Disconnecting
+	output, err := sm.executeCommand("quit")
 	sm.serverName = ""
-	sm.connected = false
-	if closePipes {
+	sm.status = Disconnect
+	if closeShell {
 		sm.shell.Terminate()
 	}
 	if err != nil {
 		log.Errorln(err)
 		return err
 	}
-	// @FIXME: some shit happens here - output is empty if CTRL+C pressed
-	// if !strings.Contains(output, "Disconnecting from server.") {
-	// 	err = fmt.Errorf("error! failed to disconnect: '%s'", output)
-	// 	log.Errorln(err)
-	// 	return err
-	// }
-	log.Infoln("Connection closed.")
+	if !strings.Contains(output, "Disconnecting from server.") {
+		err = fmt.Errorf("error on exit: '%v'", output)
+		log.Errorln(err)
+		return err
+	}
+	log.Infoln("srvrmgr connection closed.")
 	return nil
 }
 
 func (sm *srvrMgr) executeCommand(cmd string) (string, error) {
 	log.Debugln("srvrmgr.executeCommand")
-	// log.Debugf("	'%s'", cmd)
 
 	result, err := sm.shell.ExecuteCommand(cmd)
 	if err != nil {
@@ -199,7 +214,6 @@ func (sm *srvrMgr) executeCommand(cmd string) (string, error) {
 	}
 
 	result = strings.Trim(result, " \n")
-	// log.Debugf("	RESULT:\n%s", result)
 
 	return result, nil
 }

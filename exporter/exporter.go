@@ -168,27 +168,35 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		}
 	}(time.Now())
 
-	// If not connected, then trying to reconnect
-	if !e.srvrmgr.IsConnected() { // @FIXME: potential bug
+	e.gatewayServerUp.Set(0)
+
+	// Check srvrmgr connection status
+	switch e.srvrmgr.GetStatus() {
+	case srvrmgr.Disconnecting:
+		log.Warnln("Unable to scrape: srvrmgr is in process of disconnection from Siebel Gateway Server.")
+		return
+	case srvrmgr.Connecting:
+		log.Warnln("Unable to scrape: srvrmgr is in process of connection to Siebel Gateway Server.")
+		return
+	case srvrmgr.Disconnect:
+		log.Warnln("Unable to scrape: srvrmgr not connected to Siebel Gateway Server. Trying to reconnect...")
 		if err = e.srvrmgr.Reconnect(); err != nil {
-			// log.Errorln(err)
-			e.gatewayServerUp.Set(0)
-			return
-		} else {
-			e.gatewayServerUp.Set(1)
-		}
-	} else {
-		// If already connected, then detecting Siebel Gateway Server is up or down
-		if gatewayServerState := e.srvrmgr.PingGatewayServer(); !gatewayServerState {
-			log.Warnln("Connection to the Siebel Gateway Server was lost. Will try to reconnect on next scrape.")
-			e.gatewayServerUp.Set(0)
 			return
 		}
-		e.gatewayServerUp.Set(1)
+	case srvrmgr.Connected:
+		if !e.srvrmgr.PingGatewayServer() {
+			log.Warnln("Unable to scrape: srvrmgr was lost connection to the Siebel Gateway Server. Will try to reconnect on next scrape.")
+			return
+		}
+	default:
+		log.Errorln("Unable to scrape: unknown status of srvrmgr connection.")
+		return
 	}
 
+	e.gatewayServerUp.Set(1)
+
 	if checkIfMetricsChanged(&e.customMetricsFile) {
-		log.Infoln("Metrics changed, reload it.")
+		log.Infoln("Custom metrics changed, reload it.")
 		reloadMetrics(&e.defaultMetricsFile, &e.customMetricsFile)
 	}
 
@@ -233,7 +241,8 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 			log.Errorln("Error scraping for '" + metric.Subsystem + "', '" + fmt.Sprintf("%+v", metric.Help) + "' :\n" + err.Error())
 			e.scrapeErrors.WithLabelValues(metric.Subsystem).Inc()
 		} else {
-			log.Debugln("Successfully scraped metric. '" + metric.Subsystem + "', " + fmt.Sprintf("%+v", metric.Help) + "'. Time: '" + time.Since(scrapeStart).String() + "'.")
+			scrapeEnd := time.Since(scrapeStart)
+			log.Debugln("Successfully scraped metric. '" + metric.Subsystem + "', " + fmt.Sprintf("%+v", metric.Help) + "'. Time: '" + scrapeEnd.String() + "'.")
 		}
 	}
 }
