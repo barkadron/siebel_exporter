@@ -1,7 +1,6 @@
 [[Metric]]
-Command = "list server show SBLSRVR_NAME, SBLSRVR_STATE, START_TIME, END_TIME"
+Command = "list server show SBLSRVR_STATE, START_TIME, END_TIME"
 Subsystem = "list_server"
-Labels = [ "SBLSRVR_NAME" ]
 [Metric.Help]
 SBLSRVR_STATE = "State of the Siebel Application Server."
 START_TIME = "Time the Siebel Application Server was started."
@@ -20,9 +19,9 @@ END_TIME = "Time the Siebel Application Server was stopped."
 "Disconnected" = "11"
 
 [[Metric]]
-Command = "list component groups show SV_NAME, CG_NAME, CA_RUN_STATE, CG_NUM_COMPONENTS"
+Command = "list component groups show CG_NAME, CA_RUN_STATE, CG_NUM_COMPONENTS"
 Subsystem = "list_compgroup"
-Labels = [ "SV_NAME", "CG_NAME" ]
+Labels = [ "CG_NAME" ]
 [Metric.Help]
 CA_RUN_STATE = "State of the Component Group."
 CG_NUM_COMPONENTS = "Number of components in the Component Group."
@@ -36,9 +35,9 @@ CG_NUM_COMPONENTS = "Number of components in the Component Group."
 "Starting up" = "7"
 
 [[Metric]]
-Command = "list comp show SV_NAME, CC_ALIAS, CP_DISP_RUN_STATE, CP_NUM_RUN_TASKS, CP_MAX_TASKS, CP_ACTV_MTS_PROCS, CP_MAX_MTS_PROCS, CP_START_TIME, CP_END_TIME"
+Command = "list comp show CC_ALIAS, CP_DISP_RUN_STATE, CP_NUM_RUN_TASKS, CP_MAX_TASKS, CP_ACTV_MTS_PROCS, CP_MAX_MTS_PROCS, CP_START_TIME, CP_END_TIME"
 Subsystem = "list_comp"
-Labels = [ "SV_NAME", "CC_ALIAS" ]
+Labels = [ "CC_ALIAS" ]
 [Metric.Help]
 CP_DISP_RUN_STATE = "Current state of the Component."
 CP_NUM_RUN_TASKS = "Current number of running tasks for the Component."
@@ -57,9 +56,8 @@ CP_END_TIME = "Time the Component was ended."
 "Unavailable" = "7"
 
 [[Metric]]
-Command = "list statistics show SBLSRVR_NAME, STAT_NAME, SD_DESC, CURR_VAL"
+Command = "list statistics show STAT_NAME, SD_DESC, CURR_VAL"
 Subsystem = "list_statistics_server"
-Labels = [ "SBLSRVR_NAME" ]
 FieldToAppend = "STAT_NAME"
 [Metric.Help]
 CURR_VAL = "Current value of the Siebel Application Server Statistic."
@@ -67,9 +65,8 @@ CURR_VAL = "Current value of the Siebel Application Server Statistic."
 CURR_VAL = "SD_DESC"
 
 [[Metric]]
-Command = "list state values show SBLSRVR_NAME, STATEVAL_NAME, VD_DESC, CURR_VAL"
+Command = "list state values show STATEVAL_NAME, VD_DESC, CURR_VAL"
 Subsystem = "list_state_values_server"
-Labels = [ "SBLSRVR_NAME" ]
 FieldToAppend = "STATEVAL_NAME"
 [Metric.Help]
 CURR_VAL = "Current value of the Siebel Application Server State Value."
