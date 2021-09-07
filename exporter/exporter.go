@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -295,10 +296,25 @@ func scrapeGenericValues(namespace string, dateFormat string, overrideEmptyMetri
 			}
 			metricValue := row[metricName]
 			// Value mapping
-			if val1, exists1 := valueMap[metricName]; exists1 {
-				if val2, exists2 := val1[metricValue]; exists2 {
-					log.Debugln("	- [ValueMap]: Value '" + metricValue + "' converted to '" + val2 + "'.")
-					metricValue = val2
+			if metricMap, exists1 := valueMap[metricName]; exists1 {
+				if len(metricMap) > 0 {
+					if mappedValue, exists2 := metricMap[metricValue]; exists2 {
+						log.Debugln("	- [ValueMap]: Value '" + metricValue + "' converted to '" + mappedValue + "'.")
+						metricValue = mappedValue
+					}
+					// Add mapping to help
+					mappingHelp := " Value mapping: "
+					mapStrings := []string{}
+					for src, dst := range metricMap {
+						mapStrings = append(mapStrings, dst+" - '"+src+"', ")
+					}
+					sort.Strings(mapStrings)
+					for _, mapStr := range mapStrings {
+						mappingHelp = mappingHelp + mapStr
+					}
+					mappingHelp = strings.TrimRight(mappingHelp, ", ")
+					mappingHelp = mappingHelp + "."
+					metricHelp = metricHelp + mappingHelp
 				}
 			}
 			// If not a float, skip current metric
