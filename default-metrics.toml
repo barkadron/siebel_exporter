@@ -1,5 +1,74 @@
-[[metric]]
-context = "list_comp"
-labels = [ "sv_name", "cc_alias" ]
-metricsdesc = { cp_num_run_tasks = "The current number of running tasks for the component.", cp_max_tasks = "The maximum number of running tasks for the component.", cp_actv_mts_procs = "The current number of running multi-threaded shell (MTS) processes for the component.", cp_max_mts_procs = "The maximum number of running multi-threaded shell (MTS) processes for the component.", cp_start_time = "The time when component started.", cp_end_time = "The time when component ended." }
-request = "list comp show SV_NAME, CC_ALIAS, CP_NUM_RUN_TASKS, CP_MAX_TASKS, CP_ACTV_MTS_PROCS, CP_MAX_MTS_PROCS, CP_START_TIME, CP_END_TIME"
+[[Metric]]
+Command = "list server show SBLSRVR_STATE, START_TIME, END_TIME"
+Subsystem = "list_server"
+[Metric.Help]
+SBLSRVR_STATE = "State of the Siebel Application Server."
+START_TIME = "Time the Siebel Application Server was started."
+END_TIME = "Time the Siebel Application Server was stopped."
+[Metric.ValueMap.SBLSRVR_STATE] # Sort according to doc - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor2.html#wp1034139
+"Starting Up" = "1"
+"Running" = "2"
+"Shutting Down" = "3"
+"Shutdown" = "4"
+"Not Online" = "5"
+"Partially Offline" = "6"
+"Not available" = "7"
+"Connect Failed" = "8"
+"Handshake Failed" = "9"
+"Login Failed" = "10"
+"Disconnected" = "11"
+
+[[Metric]]
+Command = "list component groups show CG_NAME, CA_RUN_STATE, CG_NUM_COMPONENTS"
+Subsystem = "list_compgroup"
+Labels = [ "CG_NAME" ]
+[Metric.Help]
+CA_RUN_STATE = "State of the Component Group."
+CG_NUM_COMPONENTS = "Number of components in the Component Group."
+[Metric.ValueMap.CA_RUN_STATE] # Sort according to doc - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor3.html#wp1047134
+"Online" = "1"
+"Running" = "2"
+"Shutdown" = "3"
+"Part shutdown" = "4"
+"Offline" = "5"
+"Part offline" = "6"
+"Starting up" = "7"
+
+[[Metric]]
+Command = "list comp show CC_ALIAS, CP_DISP_RUN_STATE, CP_NUM_RUN_TASKS, CP_MAX_TASKS, CP_ACTV_MTS_PROCS, CP_MAX_MTS_PROCS, CP_START_TIME, CP_END_TIME"
+Subsystem = "list_comp"
+Labels = [ "CC_ALIAS" ]
+[Metric.Help]
+CP_DISP_RUN_STATE = "Current state of the Component."
+CP_NUM_RUN_TASKS = "Current number of running tasks for the Component."
+CP_MAX_TASKS = "Maximum number of running tasks for the Component."
+CP_ACTV_MTS_PROCS = "Current number of running multi-threaded shell (MTS) processes for the Component."
+CP_MAX_MTS_PROCS = "Maximum number of running multi-threaded shell (MTS) processes for the Component."
+CP_START_TIME = "Time the Component was started."
+CP_END_TIME = "Time the Component was ended."
+[Metric.ValueMap.CP_DISP_RUN_STATE] # Sort according to doc - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor4.html#wp1036510
+"Starting Up" = "1"
+"Online" = "2"
+"Running" = "3"
+"Offline" = "4"
+"Shutting Down" = "5"
+"Shutdown" = "6"
+"Unavailable" = "7"
+
+[[Metric]]
+Command = "list statistics show STAT_NAME, SD_DESC, CURR_VAL"
+Subsystem = "list_statistics_server"
+FieldToAppend = "STAT_NAME"
+[Metric.Help]
+CURR_VAL = "Current value of the Siebel Application Server Statistic."
+[Metric.HelpField]
+CURR_VAL = "SD_DESC"
+
+[[Metric]]
+Command = "list state values show STATEVAL_NAME, VD_DESC, CURR_VAL"
+Subsystem = "list_state_values_server"
+FieldToAppend = "STATEVAL_NAME"
+[Metric.Help]
+CURR_VAL = "Current value of the Siebel Application Server State Value."
+[Metric.HelpField]
+CURR_VAL = "VD_DESC"
