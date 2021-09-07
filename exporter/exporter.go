@@ -19,15 +19,6 @@ import (
 	"github.com/prometheus/common/log"
 )
 
-// Default metrics to scrap. Use external file (default-metrics.toml)
-var defaultMetrics Metrics
-
-// Custom metrics to scrap. Use custom external file (if provided)
-var customMetrics Metrics
-
-// Metrics Files HashMap
-var metricsFilesHashMap = make(map[int][]byte)
-
 // Metrics object definition
 type Metric struct {
 	Command          string
@@ -52,22 +43,34 @@ type Exporter struct {
 	namespace            string
 	subsystem            string
 	dateFormat           string
-	emptyMetricsOverride string
+	overrideEmptyMetrics bool
 	defaultMetricsFile   string
 	customMetricsFile    string
 	srvrmgr              srvrmgr.SrvrMgr
 	duration, error      prometheus.Gauge
 	totalScrapes         prometheus.Counter
-	scrapeErrors         *prometheus.CounterVec
-	gatewayServerUp      prometheus.Gauge
+	// scrapeErrors         *prometheus.CounterVec
+	scrapeErrors    prometheus.Counter
+	gatewayServerUp prometheus.Gauge
 }
 
+var (
+	defaultMetrics Metrics                // Default metrics to scrap. Use external file (default-metrics.toml)
+	customMetrics  Metrics                // Custom metrics to scrap. Use custom external file (if provided)
+	metricsHashMap = make(map[int][]byte) // Metrics Files HashMap
+)
+
 // NewExporter returns a new Siebel exporter for the provided args.
-func NewExporter(namespace, subsystem, defaultMetricsFile, customMetricsFile, dateFormat, emptyMetricsOverride string, srvrmgr srvrmgr.SrvrMgr) *Exporter {
+func NewExporter(srvrmgr srvrmgr.SrvrMgr, defaultMetricsFile, customMetricsFile, dateFormat string, overrideEmptyMetrics bool) *Exporter {
 	log.Debugln("NewExporter")
 
+	const (
+		namespace = "siebel"
+		subsystem = "exporter"
+	)
+
 	// Load default and custom metrics
-	reloadMetrics(&defaultMetricsFile, &customMetricsFile)
+	reloadMetrics(defaultMetricsFile, customMetricsFile)
 
 	// maybe this is superfluous...
 	// labels := map[string]string{
@@ -78,7 +81,7 @@ func NewExporter(namespace, subsystem, defaultMetricsFile, customMetricsFile, da
 		namespace:            namespace,
 		subsystem:            subsystem,
 		dateFormat:           dateFormat,
-		emptyMetricsOverride: emptyMetricsOverride,
+		overrideEmptyMetrics: overrideEmptyMetrics,
 		defaultMetricsFile:   defaultMetricsFile,
 		customMetricsFile:    customMetricsFile,
 		srvrmgr:              srvrmgr,
@@ -96,13 +99,14 @@ func NewExporter(namespace, subsystem, defaultMetricsFile, customMetricsFile, da
 			Help:      "Total number of times Siebel was scraped for metrics.",
 			// ConstLabels: labels,
 		}),
-		scrapeErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
+		scrapeErrors: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      "scrape_errors_total",
 			Help:      "Total number of times an error occured scraping a Siebel.",
 			// ConstLabels: labels,
-		}, []string{"collector"}),
+			// }, []string{"collector"}),
+		}),
 		error: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
@@ -180,8 +184,8 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		log.Warnln("Unable to scrape: srvrmgr is in process of connection to Siebel Gateway Server.")
 		return
 	case srvrmgr.Disconnect:
-		log.Warnln("Unable to scrape: srvrmgr not connected to Siebel Gateway Server. Trying to reconnect...")
-		if err = e.srvrmgr.Reconnect(); err != nil {
+		log.Warnln("Unable to scrape: srvrmgr not connected to Siebel Gateway Server. Trying to connect...")
+		if err = e.srvrmgr.Connect(); err != nil {
 			return
 		}
 	case srvrmgr.Connected:
@@ -196,9 +200,9 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 
 	e.gatewayServerUp.Set(1)
 
-	if checkIfMetricsChanged(&e.customMetricsFile) {
+	if checkIfMetricsChanged(e.customMetricsFile) {
 		log.Infoln("Custom metrics changed, reload it.")
-		reloadMetrics(&e.defaultMetricsFile, &e.customMetricsFile)
+		reloadMetrics(e.defaultMetricsFile, e.customMetricsFile)
 	}
 
 	for _, metric := range defaultMetrics.Metric {
@@ -239,9 +243,10 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		}
 
 		scrapeStart := time.Now()
-		if err = scrapeMetric(e.namespace, e.dateFormat, e.emptyMetricsOverride, e.srvrmgr, ch, metric); err != nil {
+		if err = scrapeMetric(e.namespace, e.dateFormat, e.overrideEmptyMetrics, e.srvrmgr, ch, metric); err != nil {
 			log.Errorln("Error scraping for '" + metric.Subsystem + "', '" + fmt.Sprintf("%+v", metric.Help) + "' :\n" + err.Error())
-			e.scrapeErrors.WithLabelValues(metric.Subsystem).Inc()
+			// e.scrapeErrors.WithLabelValues(metric.Subsystem).Inc()
+			e.scrapeErrors.Inc()
 		} else {
 			scrapeEnd := time.Since(scrapeStart)
 			log.Debugln("Successfully scraped metric. '" + metric.Subsystem + "', " + fmt.Sprintf("%+v", metric.Help) + "'. Time: '" + scrapeEnd.String() + "'.")
@@ -250,14 +255,14 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 }
 
 // interface method to call ScrapeGenericValues using Metric struct values
-func scrapeMetric(namespace string, dateFormat string, emptyMetricsOverride string, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric, metricDefinition Metric) error {
-	return scrapeGenericValues(namespace, dateFormat, emptyMetricsOverride, srvrmgr, ch,
+func scrapeMetric(namespace string, dateFormat string, overrideEmptyMetrics bool, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric, metricDefinition Metric) error {
+	return scrapeGenericValues(namespace, dateFormat, overrideEmptyMetrics, srvrmgr, ch,
 		metricDefinition.Subsystem, metricDefinition.Labels, metricDefinition.Help, metricDefinition.HelpField, metricDefinition.Type,
 		metricDefinition.Buckets, metricDefinition.FieldToAppend, metricDefinition.IgnoreZeroResult, metricDefinition.ValueMap, metricDefinition.Command)
 }
 
 // generic method for retrieving metrics.
-func scrapeGenericValues(namespace string, dateFormat string, emptyMetricsOverride string, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric,
+func scrapeGenericValues(namespace string, dateFormat string, overrideEmptyMetrics bool, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric,
 	metricSubsystem string, labels []string, metricsHelp map[string]string, metricsHelpField map[string]string, metricsTypes map[string]string,
 	metricsBuckets map[string]map[string]string, fieldToAppend string, ignoreZeroResult bool, valueMap map[string]map[string]string, command string) error {
 	metricsCount := 0
@@ -336,7 +341,7 @@ func scrapeGenericValues(namespace string, dateFormat string, emptyMetricsOverri
 		return nil
 	}
 
-	err := generatePrometheusMetrics(srvrmgr, dataRowToPrometheusMetricConverter, command, dateFormat, emptyMetricsOverride)
+	err := generatePrometheusMetrics(srvrmgr, dataRowToPrometheusMetricConverter, command, dateFormat, overrideEmptyMetrics)
 	log.Debugln("ScrapeGenericValues | metricsCount: " + fmt.Sprint(metricsCount))
 	if err != nil {
 		return err
@@ -349,7 +354,7 @@ func scrapeGenericValues(namespace string, dateFormat string, emptyMetricsOverri
 }
 
 // Parse srvrmgr result and call parsing function to each row
-func generatePrometheusMetrics(srvrmgr srvrmgr.SrvrMgr, dataRowToPrometheusMetricConverter func(row map[string]string) error, command string, dateFormat string, emptyMetricsOverride string) error {
+func generatePrometheusMetrics(srvrmgr srvrmgr.SrvrMgr, dataRowToPrometheusMetricConverter func(row map[string]string) error, command string, dateFormat string, overrideEmptyMetrics bool) error {
 	log.Debugln("generatePrometheusMetrics")
 
 	commandResult, err := srvrmgr.ExecuteCommand(command)
@@ -393,8 +398,8 @@ func generatePrometheusMetrics(srvrmgr srvrmgr.SrvrMgr, dataRowToPrometheusMetri
 			colValue := strings.TrimSpace(rawRow[:colMaxLen])
 
 			// If value is empty then set it to default "0"
-			if len(colValue) == 0 && len(emptyMetricsOverride) > 0 {
-				colValue = emptyMetricsOverride
+			if overrideEmptyMetrics && len(colValue) == 0 {
+				colValue = "0"
 			}
 
 			// Try to convert date-string to Unix timestamp
@@ -487,11 +492,11 @@ func hashFile(h hash.Hash, fn string) error {
 	return nil
 }
 
-func checkIfMetricsChanged(customMetricsFile *string) bool {
+func checkIfMetricsChanged(customMetricsFile string) bool {
 	log.Debugln("Check if metrics changed...")
 	result := false
 
-	for i, _customMetrics := range strings.Split(*customMetricsFile, ",") {
+	for i, _customMetrics := range strings.Split(customMetricsFile, ",") {
 		if len(_customMetrics) == 0 {
 			continue
 		}
@@ -503,9 +508,9 @@ func checkIfMetricsChanged(customMetricsFile *string) bool {
 			break
 		}
 		// If any of files has been changed reload metrics
-		if !bytes.Equal(metricsFilesHashMap[i], h.Sum(nil)) {
+		if !bytes.Equal(metricsHashMap[i], h.Sum(nil)) {
 			log.Infoln(_customMetrics, "has been changed. Reloading metrics...")
-			metricsFilesHashMap[i] = h.Sum(nil)
+			metricsHashMap[i] = h.Sum(nil)
 			result = true
 			break
 		}
@@ -520,21 +525,21 @@ func checkIfMetricsChanged(customMetricsFile *string) bool {
 	return result
 }
 
-func reloadMetrics(defaultMetricsFile, customMetricsFile *string) {
+func reloadMetrics(defaultMetricsFile, customMetricsFile string) {
 	// Truncate defaultMetrics
 	defaultMetrics.Metric = []Metric{}
 
 	// Load default metrics
-	if _, err := toml.DecodeFile(*defaultMetricsFile, &defaultMetrics); err != nil {
+	if _, err := toml.DecodeFile(defaultMetricsFile, &defaultMetrics); err != nil {
 		log.Errorln(err)
-		panic(errors.New("Error while loading " + *defaultMetricsFile))
+		panic(errors.New("Error while loading " + defaultMetricsFile))
 	} else {
-		log.Infoln("Successfully loaded default metrics from: " + *defaultMetricsFile)
+		log.Infoln("Successfully loaded default metrics from: " + defaultMetricsFile)
 	}
 
 	// If custom metrics, load it
-	if strings.Compare(*customMetricsFile, "") != 0 {
-		for _, _customMetrics := range strings.Split(*customMetricsFile, ",") {
+	if strings.Compare(customMetricsFile, "") != 0 {
+		for _, _customMetrics := range strings.Split(customMetricsFile, ",") {
 			if _, err := toml.DecodeFile(_customMetrics, &customMetrics); err != nil {
 				log.Errorln(err)
 				panic(errors.New("Error while loading " + _customMetrics))

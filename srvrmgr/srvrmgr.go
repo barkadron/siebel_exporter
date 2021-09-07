@@ -31,7 +31,7 @@ type srvrMgr struct {
 // Public interface
 // https://stackoverflow.com/a/53034166
 type SrvrMgr interface {
-	Reconnect() error
+	Connect() error
 	Disconnect() error
 	GetStatus() Status
 	ExecuteCommand(cmd string) (string, error)
@@ -39,7 +39,7 @@ type SrvrMgr interface {
 	PingGatewayServer() bool
 }
 
-func NewSrvrmgr(connectCmd string, shell shell.Shell) SrvrMgr {
+func NewSrvrmgr(connectCmd string, readBufferSize int) SrvrMgr {
 	log.Debugln("NewSrvrmgr")
 
 	// Redirection is no longer needed, because now we are able to correctly handle the stdErr
@@ -49,16 +49,22 @@ func NewSrvrmgr(connectCmd string, shell shell.Shell) SrvrMgr {
 	// 	connectCmd = connectCmd + redirectSuffix
 	// }
 
-	// @TODO: check for '/q' in connectCmd
+	// // Check for '/s' in connectCmd
+	// if regexp.MustCompile(`(?i)(^|\s)\/s\s+[^\s]+(\s|$)`).FindStringSubmatch(connectCmd) == nil {
+	// 	panic(errors.New("Error! Unable to create srvrmgr: connectCmd not contain '/s' argument.\n" + connectCmd + ""))
+	// }
+
+	// // Check for '/q' in connectCmd
+	// if regexp.MustCompile(`(?i)(^|\s)\/q(\s|$)`).FindStringSubmatch(connectCmd) == nil {
+	// 	connectCmd = connectCmd + " /q"
+	// }
 
 	sm := &srvrMgr{
 		connectCmd: connectCmd,
 		serverName: "",
 		status:     Disconnect,
-		shell:      shell,
+		shell:      shell.NewShell(readBufferSize),
 	}
-
-	sm.connect()
 
 	return sm
 }
@@ -67,12 +73,12 @@ func (sm *srvrMgr) GetStatus() Status {
 	return sm.status
 }
 
-func (sm *srvrMgr) Reconnect() error {
+func (sm *srvrMgr) Connect() error {
 	return sm.reconnect()
 }
 
 func (sm *srvrMgr) Disconnect() error {
-	return sm.disconnect()
+	return sm.disconnect(true)
 }
 
 func (sm *srvrMgr) GetApplicationServerName() string {
@@ -82,7 +88,7 @@ func (sm *srvrMgr) GetApplicationServerName() string {
 func (sm *srvrMgr) ExecuteCommand(cmd string) (string, error) {
 	cmd = strings.TrimSpace(cmd)
 	if strings.ToLower(cmd) == "exit" || strings.ToLower(cmd) == "quit" {
-		return "", sm.disconnect()
+		return "", sm.disconnect(false)
 	} else {
 		return sm.executeCommand(cmd)
 	}
@@ -93,16 +99,12 @@ func (sm *srvrMgr) PingGatewayServer() bool {
 	_, err := sm.executeCommand("list ent param MaxThreads show PA_VALUE")
 	if err != nil {
 		log.Errorln("Error pinging Siebel Gateway Server: \n", err, "\n")
-		sm.exit(false)
+		sm.disconnect(false)
 		return false // Down
 	}
 	log.Debugln("Successfully pinged Siebel Gateway Server.")
 	return true // Up
 }
-
-/***********************
-*** internal methods ***
-***********************/
 
 func (sm *srvrMgr) connect() error {
 	log.Debugln("srvrmgr.connect")
@@ -110,7 +112,7 @@ func (sm *srvrMgr) connect() error {
 		return nil
 	}
 
-	log.Infoln("Connecting to srvrmgr...")
+	log.Debugln("Connecting to srvrmgr...")
 	sm.status = Connecting
 	connRes, err := sm.executeCommand(sm.connectCmd)
 	if err != nil {
@@ -124,12 +126,18 @@ func (sm *srvrMgr) connect() error {
 		if len(serverNameMatch) >= 1 {
 			sm.serverName = serverNameMatch[1]
 			sm.status = Connected
-			log.Infoln("Successfully connected to server: ", sm.serverName)
+			log.Infoln("Successfully connected to server: '" + sm.serverName + "'.")
 		} else {
-			return fmt.Errorf("error! siebel server name was not found: '%s'", connRes)
+			defer sm.disconnect(false)
+			err := fmt.Errorf("error! Connection established, but server name not found. Did you forget to define '/s' argument in connection command?")
+			log.Errorln(err)
+			return err
 		}
 	} else {
-		return fmt.Errorf("error! connection was not established: '%s'", connRes)
+		defer sm.disconnect(false)
+		err := fmt.Errorf("error! Connection established, but it looks like there are multiple servers. Did you forget to define '/s' argument in connection command?")
+		log.Errorln(err)
+		return err
 	}
 
 	// Disable footer (last string in command result like "12 rows returned.")
@@ -138,14 +146,9 @@ func (sm *srvrMgr) connect() error {
 	return nil
 }
 
-func (sm *srvrMgr) disconnect() error {
-	log.Debugln("srvrmgr.disconnect")
-	return sm.exit(true)
-}
-
 func (sm *srvrMgr) reconnect() error {
 	log.Debugln("srvrmgr.reconnect")
-	if err := sm.exit(false); err != nil {
+	if err := sm.disconnect(false); err != nil {
 		return err
 	}
 	if err := sm.connect(); err != nil {
@@ -154,17 +157,17 @@ func (sm *srvrMgr) reconnect() error {
 	return nil
 }
 
-func (sm *srvrMgr) exit(closeShell bool) error { //@TODO: need refactoring (mb just close shell all the time?)
-	log.Debugln("srvrmgr.exit")
+func (sm *srvrMgr) disconnect(closeShell bool) error { //@TODO: closeShell... mb just close shell all the time???
+	log.Debugln("srvrmgr.disconnect")
 	if sm.status == Disconnect || sm.status == Disconnecting {
 		return nil
 	}
 
-	log.Infoln("Disconnecting from srvrmgr...")
+	log.Debugln("Disconnecting from srvrmgr...")
 	sm.status = Disconnecting
 	output, err := sm.executeCommand("quit")
-	sm.serverName = ""
 	sm.status = Disconnect
+	sm.serverName = ""
 	if closeShell {
 		sm.shell.Terminate()
 	}
@@ -177,7 +180,7 @@ func (sm *srvrMgr) exit(closeShell bool) error { //@TODO: need refactoring (mb j
 		log.Errorln(err)
 		return err
 	}
-	log.Infoln("srvrmgr connection closed.")
+	log.Debugln("srvrmgr connection closed.")
 	return nil
 }
 

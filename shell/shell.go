@@ -7,27 +7,31 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/prometheus/common/log"
 )
 
 type shell struct {
-	cmd            *exec.Cmd
-	readBufferSize int
-	stdInPipe      *io.WriteCloser
-	stdOutPipe     *io.ReadCloser
-	stdErrPipe     *io.ReadCloser
-	outCh          *chan string
-	outErrCh       *chan error
-	errCh          *chan error
-	quitCh         *chan bool
+	cmd                *exec.Cmd
+	readBufferSize     int
+	stdInPipe          *io.WriteCloser
+	stdOutPipe         *io.ReadCloser
+	stdErrPipe         *io.ReadCloser
+	stdOutReaderReady  bool
+	stdErrReaderReady  bool
+	outCh              *chan string
+	outErrCh           *chan error
+	errCh              *chan error
+	stdOutReaderQuitCh *chan bool
+	stdErrReaderQuitCh *chan bool
 }
 
 // Public interface
 // https://stackoverflow.com/a/53034166
 type Shell interface {
 	ExecuteCommand(cmd string) (string, error)
-	Terminate() error
+	Terminate()
 }
 
 func NewShell(readBufferSize int) Shell {
@@ -60,179 +64,207 @@ func NewShell(readBufferSize int) Shell {
 		panic(err)
 	}
 
-	log.Debugln("	- start command")
+	log.Debugln("	- start command.")
 	if err := cmd.Start(); err != nil {
 		panic(err)
 	}
 
-	log.Debugln("	- create channels")
+	log.Debugln("	- create channels.")
 	outCh := make(chan string, 1)
 	outErrCh := make(chan error, 1)
 	errCh := make(chan error, 1)
-	quitCh := make(chan bool, 1)
+	stdOutReaderQuitCh := make(chan bool, 1)
+	stdErrReaderQuitCh := make(chan bool, 1)
 
-	log.Debugln("	- init shell struct")
+	log.Debugln("	- init shell-object.")
 	s := &shell{
-		cmd:            cmd,
-		stdInPipe:      &stdInPipe,
-		stdOutPipe:     &stdOutPipe,
-		stdErrPipe:     &stdErrPipe,
-		readBufferSize: readBufferSize,
-		outCh:          &outCh,
-		outErrCh:       &outErrCh,
-		errCh:          &errCh,
-		quitCh:         &quitCh,
+		cmd:                cmd,
+		readBufferSize:     readBufferSize,
+		stdInPipe:          &stdInPipe,
+		stdOutPipe:         &stdOutPipe,
+		stdErrPipe:         &stdErrPipe,
+		stdOutReaderReady:  false,
+		stdErrReaderReady:  false,
+		outCh:              &outCh,
+		outErrCh:           &outErrCh,
+		errCh:              &errCh,
+		stdOutReaderQuitCh: &stdOutReaderQuitCh,
+		stdErrReaderQuitCh: &stdErrReaderQuitCh,
 	}
 
-	log.Debugln("	- run goroutine for read from stderr")
-	// Read stderr
+	var readyToReadWG sync.WaitGroup
+	readyToReadWG.Add(2)
+
+	// Reader for StdErr
 	go func() {
+		log.Debugln("	- run reader for StdErr.")
 		defer close(errCh)
 		for {
 			select {
-			case <-quitCh:
-				log.Debugln("[stderr quitCh]")
+			case <-stdErrReaderQuitCh:
+				s.stdErrReaderReady = false
+				log.Debugln("Exit from StdErrReader.")
 				return
 			default:
-				log.Debugln("[stderr default]")
-				if s != nil && s.stdErrPipe != nil {
-					if stdErrRes, err := read(s.stdErrPipe, s.readBufferSize); err != nil {
-						log.Debugln("	- stderr (err != nil)")
-						log.Debugln("		>>> '", err, "'")
-						errCh <- err
-					} else {
-						log.Debugln("	- stderr (err == nil)")
-						log.Debugln("		>>> '", stdErrRes, "'")
-						errCh <- errors.New(stdErrRes)
-					}
+				if !s.stdErrReaderReady {
+					s.stdErrReaderReady = true
+					readyToReadWG.Done()
+				}
+				log.Debugln("StdErrReader waiting for data in StdErrPipe...")
+				if stdErrRes, err := read(s.stdErrPipe, s.readBufferSize); err != nil {
+					log.Debugln("StdErrReader received error.")
+					// log.Debugln("	StdErrReader >>> ", err)
+					errCh <- err
+				} else {
+					log.Debugln("StdErrReader received data.")
+					// log.Debugln("	StdErrReader >>> ", stdErrRes)
+					errCh <- errors.New(stdErrRes)
 				}
 			}
 		}
 	}()
 
-	log.Debugln("	- run goroutine for read from stdout")
-	// Read stdout
+	// Reader for StdOut
 	go func() {
+		log.Debugln("	- run reader for StdOut.")
 		defer close(outCh)
 		defer close(outErrCh)
 		for {
 			select {
-			case <-quitCh:
-				log.Debugln("[stdout quitCh]")
+			case <-stdOutReaderQuitCh:
+				s.stdOutReaderReady = false
+				log.Debugln("Exit from StdOutReader.")
 				return
 			default:
-				log.Debugln("[stdout default]")
-				if s != nil && s.stdOutPipe != nil {
-					if stdOutRes, err := read(s.stdOutPipe, s.readBufferSize); err != nil {
-						log.Debugln("	- stdout (err != nil)")
-						log.Debugln("		>>> '", err, "'")
-						errCh <- err
-					} else {
-						log.Debugln("	- stdout (err == nil)")
-						outCh <- stdOutRes
-					}
+				if !s.stdOutReaderReady {
+					s.stdOutReaderReady = true
+					readyToReadWG.Done()
 				}
-				// return
+				log.Debugln("StdOutReader waiting for data in StdOutPipe...")
+				if stdOutRes, err := read(s.stdOutPipe, s.readBufferSize); err != nil {
+					log.Debugln("StdOutReader received error.")
+					// log.Debugln("	StdOutReader >>> ", err)
+					outErrCh <- err
+				} else {
+					log.Debugln("StdOutReader received data.")
+					// log.Debugln("	StdOutReader >>> ", stdOutRes)
+					outCh <- stdOutRes
+				}
 			}
 		}
 	}()
 
+	readyToReadWG.Wait()
+	log.Debugln("	- shell-object is ready.")
 	return s
 }
 
 func (s *shell) ExecuteCommand(cmd string) (string, error) {
 	if strings.ToLower(strings.TrimSpace(cmd)) == "exit" {
-		return "", s.terminate()
+		s.terminate()
+		return "", nil
 	} else {
 		return s.executeCommand(cmd)
 	}
 }
 
-func (s *shell) Terminate() error {
+func (s *shell) Terminate() {
 	log.Debugln("shell.Terminate")
-	return s.terminate()
+	s.terminate()
 }
-
-/***********************
-*** internal methods ***
-***********************/
 
 func (s *shell) executeCommand(cmd string) (string, error) {
 	log.Debugln("shell.executeCommand")
 
+	if !s.stdOutReaderReady {
+		return "", errors.New("unable to execute command because stdoutreader is not ready")
+	}
+	if !s.stdErrReaderReady {
+		return "", errors.New("unable to execute command because stderrreader is not ready")
+	}
+
 	// Check for '/p password' in command and remove it from log
 	cmdForLog := regexp.MustCompile(`(?i)(.*?\/p\s+)([^\s]+)(\s+.*|$)`).ReplaceAllString(cmd, "$1********$3")
 	log.Debugf("	'%s'", cmdForLog)
+
+	// @FIXME: this is unstable, need more time...
+	// timeoutCh := make(chan error, 1)
+	// go func() {
+	// 	defer close(timeoutCh)
+	// 	if *commandTimeout <= 0 {
+	// 		return
+	// 	}
+	// 	time.Sleep(time.Second * time.Duration(*commandTimeout))
+	// 	timeoutCh <- errors.New("timeout")
+	// }()
+
+	if _, err := io.WriteString(*s.stdInPipe, cmd+"\n"); err != nil {
+		log.Errorln("Error on WriteString to stdInPipe:", err)
+		return "", err
+	}
 
 	var (
 		cmdResult string = ""
 		cmdError  error  = nil
 	)
 
-	// @FIXME: this is unstable, need more time...
-	// timeoutCh := make(chan error, 1)
-	// go func() {
-	// 	defer close(timeoutCh)
-	// 	if *queryTimeout <= 0 {
-	// 		return
-	// 	}
-	// 	time.Sleep(time.Second * time.Duration(*queryTimeout))
-	// 	timeoutCh <- errors.New("timeout")
-	// }()
-
-	if _, err := io.WriteString(*s.stdInPipe, cmd+"\n"); err != nil {
-		log.Errorln(err)
-		return "", err
-	}
-
 	select {
 	case cmdResult = <-*s.outCh:
-		log.Debugln("[chanOut]")
-		break
+		log.Debugln("Command output received from outCh.")
 	case cmdError = <-*s.outErrCh:
-		log.Debugln("[chanOutErr]")
-		break
+		log.Debugln("Command error received from outErrCh.")
 	case cmdError = <-*s.errCh:
-		log.Debugln("[chanErr]")
-		break
+		log.Debugln("Command error received from errCh.")
 		// case cmdError = <-timeoutCh:
 		// 	log.Debugln("[timeout]")
-		// 	break
 	}
 
 	if cmdError != nil {
-		log.Errorln(cmdError)
-	} else {
-		cmdResult = strings.Trim(cmdResult, " \n")
-		log.Debugf("	RESULT:\n%s", cmdResult)
+		if strings.ToLower(strings.TrimSpace(cmd)) == "exit" && len(strings.Trim(cmdError.Error(), " \n")) == 0 {
+			log.Debug("Hide empty error (response of 'exit' command).")
+			cmdError = nil
+		} else {
+			log.Errorf("	cmdError:\n%v", cmdError)
+		}
 	}
+
+	cmdResult = strings.Trim(cmdResult, " \n")
+	log.Debugf("	cmdResult:\n%v", cmdResult)
 
 	return cmdResult, cmdError
 }
 
-func (s *shell) terminate() error {
+func (s *shell) terminate() {
 	log.Debugln("shell.terminate")
 
-	defer close(*s.quitCh)
-	*s.quitCh <- true
+	defer close(*s.stdErrReaderQuitCh)
+	defer close(*s.stdOutReaderQuitCh)
 
-	_, err := s.executeCommand("exit")
+	log.Debugln("Send signal to quit channels.")
+	*s.stdErrReaderQuitCh <- true
+	*s.stdOutReaderQuitCh <- true
 
+	s.executeCommand("exit")
+
+	// time.Sleep(100 * time.Millisecond)
+
+	log.Debugln("Close stdInPipe.")
 	if err := (*s.stdInPipe).Close(); err != nil {
-		log.Errorln(err)
+		log.Errorln("Error on closing stdInPipe:", err)
 	}
+	log.Debugln("Close stdOutPipe.")
 	if err := (*s.stdOutPipe).Close(); err != nil {
-		log.Errorln(err)
+		log.Errorln("Error on closing stdOutPipe:", err)
 	}
+	log.Debugln("Close stdErrPipe.")
 	if err := (*s.stdErrPipe).Close(); err != nil {
-		log.Errorln(err)
+		log.Errorln("Error on closing stdErrPipe:", err)
 	}
 
+	log.Debugln("Call cmd.Wait.")
 	if err := s.cmd.Wait(); err != nil {
-		log.Errorln(err)
+		log.Errorln("Error on cmd.Wait:", err)
 	}
-
-	return err
 }
 
 func read(reader *io.ReadCloser, bufferSize int) (string, error) {
