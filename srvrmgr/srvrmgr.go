@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/barkadron/siebel_exporter/shell"
 	"github.com/prometheus/common/log"
@@ -22,10 +23,11 @@ const (
 )
 
 type srvrMgr struct {
-	connectCmd string
-	serverName string
-	status     Status
-	shell      shell.Shell
+	connectCmd     string
+	readBufferSize int
+	serverName     string
+	status         Status
+	shell          shell.Shell
 }
 
 // Public interface
@@ -60,10 +62,11 @@ func NewSrvrmgr(connectCmd string, readBufferSize int) SrvrMgr {
 	// }
 
 	sm := &srvrMgr{
-		connectCmd: connectCmd,
-		serverName: "",
-		status:     Disconnect,
-		shell:      shell.NewShell(readBufferSize),
+		connectCmd:     connectCmd,
+		readBufferSize: readBufferSize,
+		serverName:     "",
+		status:         Disconnect,
+		shell:          nil,
 	}
 
 	return sm
@@ -78,7 +81,7 @@ func (sm *srvrMgr) Connect() error {
 }
 
 func (sm *srvrMgr) Disconnect() error {
-	return sm.disconnect(true)
+	return sm.disconnect()
 }
 
 func (sm *srvrMgr) GetApplicationServerName() string {
@@ -88,7 +91,7 @@ func (sm *srvrMgr) GetApplicationServerName() string {
 func (sm *srvrMgr) ExecuteCommand(cmd string) (string, error) {
 	cmd = strings.TrimSpace(cmd)
 	if strings.ToLower(cmd) == "exit" || strings.ToLower(cmd) == "quit" {
-		return "", sm.disconnect(false)
+		return "", sm.disconnect()
 	} else {
 		return sm.executeCommand(cmd)
 	}
@@ -99,7 +102,7 @@ func (sm *srvrMgr) PingGatewayServer() bool {
 	_, err := sm.executeCommand("list ent param MaxThreads show PA_VALUE")
 	if err != nil {
 		log.Errorln("Error pinging Siebel Gateway Server: \n", err, "\n")
-		sm.disconnect(false)
+		sm.disconnect()
 		return false // Down
 	}
 	log.Debugln("Successfully pinged Siebel Gateway Server.")
@@ -113,11 +116,12 @@ func (sm *srvrMgr) connect() error {
 	}
 
 	log.Debugln("Connecting to srvrmgr...")
+	sm.shell = shell.NewShell(sm.readBufferSize)
 	sm.status = Connecting
 	connRes, err := sm.executeCommand(sm.connectCmd)
 	if err != nil {
 		sm.status = Disconnect
-		log.Errorln(err)
+		// log.Errorln(err)
 		return err
 	}
 	if strings.Contains(connRes, "Connected to 1 server(s)") {
@@ -128,13 +132,13 @@ func (sm *srvrMgr) connect() error {
 			sm.status = Connected
 			log.Infoln("Successfully connected to server: '" + sm.serverName + "'.")
 		} else {
-			defer sm.disconnect(false)
+			defer sm.disconnect()
 			err := fmt.Errorf("error! Connection established, but server name not found. Did you forget to define '/s' argument in connection command?")
 			log.Errorln(err)
 			return err
 		}
 	} else {
-		defer sm.disconnect(false)
+		defer sm.disconnect()
 		err := fmt.Errorf("error! Connection established, but it looks like there are multiple servers. Did you forget to define '/s' argument in connection command?")
 		log.Errorln(err)
 		return err
@@ -148,16 +152,19 @@ func (sm *srvrMgr) connect() error {
 
 func (sm *srvrMgr) reconnect() error {
 	log.Debugln("srvrmgr.reconnect")
-	if err := sm.disconnect(false); err != nil {
+	if err := sm.disconnect(); err != nil {
 		return err
 	}
+
+	time.Sleep(100 * time.Millisecond)
+
 	if err := sm.connect(); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (sm *srvrMgr) disconnect(closeShell bool) error { //@TODO: closeShell... mb just close shell all the time???
+func (sm *srvrMgr) disconnect() error {
 	log.Debugln("srvrmgr.disconnect")
 	if sm.status == Disconnect || sm.status == Disconnecting {
 		return nil
@@ -168,9 +175,10 @@ func (sm *srvrMgr) disconnect(closeShell bool) error { //@TODO: closeShell... mb
 	output, err := sm.executeCommand("quit")
 	sm.status = Disconnect
 	sm.serverName = ""
-	if closeShell {
-		sm.shell.Terminate()
-	}
+
+	sm.shell.Terminate()
+	sm.shell = nil
+
 	if err != nil {
 		log.Errorln(err)
 		return err
