@@ -25,7 +25,7 @@ var (
 	customMetricsFile    = kingpin.Flag("exporter.custom-metrics", "Path to TOML-file that may contain various custom metrics. (env: EXP_CUSTOM_METRICS).").Default(getEnv("EXP_CUSTOM_METRICS", "")).String()
 	overrideEmptyMetrics = kingpin.Flag("exporter.override-empty-metrics", "Override empty metric values with '0'. (env: EXP_OVERRIDE_EMPTY_METRICS).").Default(getEnv("EXP_OVERRIDE_EMPTY_METRICS", "true")).Bool()
 
-	listenPort          = kingpin.Flag("web.listen-port", "Port to listen on for web interface and metrics. (env: WEB_LISTEN_PORT).").Default(getEnv("WEB_LISTEN_PORT", "28001")).Int()
+	listenPort          = kingpin.Flag("web.listen-port", "Port to listen on for web interface and metrics. (env: WEB_LISTEN_PORT).").Default(getEnv("WEB_LISTEN_PORT", "9870")).Int()
 	metricsEndpoint     = kingpin.Flag("web.metrics-endpoint", "Path under which to expose metrics. (env: WEB_METRICS_ENDPOINT).").Default(getEnv("WEB_METRICS_ENDPOINT", "/metrics")).String()
 	httpReadTimeout     = kingpin.Flag("web.http-read-timeout", "Maximum duration for reading the entire request. (env: WEB_HTTP_READ_TIMEOUT).").Default(getEnv("WEB_HTTP_READ_TIMEOUT", "30")).Int()
 	httpWriteTimeout    = kingpin.Flag("web.http-write-timeout", "Maximum duration before timing out writes of the response. (env: WEB_HTTP_WRITE_TIMEOUT).").Default(getEnv("WEB_HTTP_WRITE_TIMEOUT", "30")).Int()

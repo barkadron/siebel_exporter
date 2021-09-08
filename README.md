@@ -71,7 +71,7 @@ Usage of siebel_exporter:
 
     --web.listen-port (env: WEB_LISTEN_PORT)
         Port to listen on for web interface and metrics.
-        Default: "28001".
+        Default: "9870".
     
     --web.metrics-endpoint (env: WEB_METRICS_ENDPOINT)
         Path under which to expose metrics.
