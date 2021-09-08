@@ -5,9 +5,7 @@
 
 ## Description
 
- A [Prometheus](https://prometheus.io/) exporter for [Oracle Siebel CRM](https://www.oracle.com/cx/siebel/).
-
- It uses the **srvrmgr** utility to retrieve Siebel status information, parse the output and construct metrics in Prometheus format.
+A [Prometheus](https://prometheus.io/) exporter for [Oracle Siebel CRM](https://www.oracle.com/cx/siebel/). It uses the **srvrmgr** utility to retrieve Siebel status information, parse the output and construct metrics in Prometheus format.
 
 ## Installation
 
@@ -33,7 +31,8 @@ export SRVRMGR_CONNECT_CMD="srvrmgr /g sbldevgtw /e SBA_82 /s sbldevapp /u SADMI
 ```
 
 > ATTENTION:  
-It is imperative that the command contains the `/s` flag indicating a specific server. Otherwise, the connection will not be established.  
+It is imperative that the command contains the `/s` flag indicating a specific server.  
+Otherwise, the connection will not be established.  
 
 ## Usage
 
@@ -113,7 +112,7 @@ Usage of siebel_exporter:
 
 This exporter comes with a set of default metrics defined in **default-metrics.toml**.
 
- The following metrics are exposed currently:
+The following metrics are exposed currently:
 
 - Basic:
   - siebel_exporter_last_scrape_duration_seconds  
@@ -140,9 +139,10 @@ This exporter comes with a set of default metrics defined in **default-metrics.t
 
 ## Custom metrics
 
-If this exporter does not have the metrics you want, you can provide new one using TOML file. To specify this file to the exporter, you can:
+If this exporter does not have the metrics you want, you can provide new one using TOML-file.  
+To specify this file to the exporter, you can:
 
-- Use `exporter.custom-metrics` option followed by the TOML file path;
+- Use `exporter.custom-metrics` option followed by the TOML-file path;
 - Export `EXP_CUSTOM_METRICS` variable environment:
 
   ```bash
@@ -152,6 +152,6 @@ If this exporter does not have the metrics you want, you can provide new one usi
 This file must contain the following elements:
 
 - One or several metric section (`[[Metric]]`);
-- For each section: `Subsystem`, `Command` and section `[Metric.Help]` with a map between a field of command and a help-string.
+- For each section: `Subsystem`, `Command` and section `[Metric.Help]` with a map between a field of command and a help-string;
 
 Other elements are optional.
