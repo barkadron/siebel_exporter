@@ -32,6 +32,7 @@ type Metric struct {
 	Labels           []string
 	FieldToAppend    string
 	IgnoreZeroResult bool
+	Extended         bool
 }
 
 // Used to load multiple metrics from file
@@ -41,15 +42,16 @@ type Metrics struct {
 
 // Exporter collects Siebel metrics. It implements prometheus.Collector.
 type Exporter struct {
-	namespace            string
-	subsystem            string
-	dateFormat           string
-	overrideEmptyMetrics bool
-	defaultMetricsFile   string
-	customMetricsFile    string
-	srvrmgr              srvrmgr.SrvrMgr
-	duration, error      prometheus.Gauge
-	totalScrapes         prometheus.Counter
+	namespace              string
+	subsystem              string
+	dateFormat             string
+	overrideEmptyMetrics   bool
+	disableExtendedMetrics bool
+	defaultMetricsFile     string
+	customMetricsFile      string
+	srvrmgr                srvrmgr.SrvrMgr
+	duration, error        prometheus.Gauge
+	totalScrapes           prometheus.Counter
 	// scrapeErrors         *prometheus.CounterVec
 	scrapeErrors    prometheus.Counter
 	gatewayServerUp prometheus.Gauge
@@ -62,7 +64,7 @@ var (
 )
 
 // NewExporter returns a new Siebel exporter for the provided args.
-func NewExporter(srvrmgr srvrmgr.SrvrMgr, defaultMetricsFile, customMetricsFile, dateFormat string, overrideEmptyMetrics bool) *Exporter {
+func NewExporter(srvrmgr srvrmgr.SrvrMgr, defaultMetricsFile, customMetricsFile, dateFormat string, overrideEmptyMetrics, disableExtendedMetrics bool) *Exporter {
 	log.Debugln("NewExporter")
 
 	const (
@@ -79,13 +81,14 @@ func NewExporter(srvrmgr srvrmgr.SrvrMgr, defaultMetricsFile, customMetricsFile,
 	// }
 
 	return &Exporter{
-		namespace:            namespace,
-		subsystem:            subsystem,
-		dateFormat:           dateFormat,
-		overrideEmptyMetrics: overrideEmptyMetrics,
-		defaultMetricsFile:   defaultMetricsFile,
-		customMetricsFile:    customMetricsFile,
-		srvrmgr:              srvrmgr,
+		namespace:              namespace,
+		subsystem:              subsystem,
+		dateFormat:             dateFormat,
+		overrideEmptyMetrics:   overrideEmptyMetrics,
+		disableExtendedMetrics: disableExtendedMetrics,
+		defaultMetricsFile:     defaultMetricsFile,
+		customMetricsFile:      customMetricsFile,
+		srvrmgr:                srvrmgr,
 		duration: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
@@ -218,6 +221,7 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		log.Debugln("	- Metric Labels: ", metric.Labels)
 		log.Debugln("	- Metric FieldToAppend: ", metric.FieldToAppend)
 		log.Debugln("	- Metric IgnoreZeroResult: ", metric.IgnoreZeroResult)
+		log.Debugln("	- Metric Extended: ", metric.Extended)
 
 		if len(metric.Command) == 0 {
 			log.Errorln("Error scraping for '" + fmt.Sprintf("%+v", metric.Help) + "'. Did you forget to define 'command' in your toml file?")
@@ -241,6 +245,11 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 					return
 				}
 			}
+		}
+
+		if metric.Extended && e.disableExtendedMetrics {
+			log.Debug("Skip extended metric.")
+			continue
 		}
 
 		scrapeStart := time.Now()
