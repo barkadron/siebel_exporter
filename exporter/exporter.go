@@ -42,16 +42,16 @@ type Metrics struct {
 
 // Exporter collects Siebel metrics. It implements prometheus.Collector.
 type Exporter struct {
-	namespace              string
-	subsystem              string
-	dateFormat             string
-	overrideEmptyMetrics   bool
-	disableExtendedMetrics bool
-	defaultMetricsFile     string
-	customMetricsFile      string
-	srvrmgr                srvrmgr.SrvrMgr
-	duration, error        prometheus.Gauge
-	totalScrapes           prometheus.Counter
+	namespace                   string
+	subsystem                   string
+	dateFormat                  string
+	disableEmptyMetricsOverride bool
+	disableExtendedMetrics      bool
+	defaultMetricsFile          string
+	customMetricsFile           string
+	srvrmgr                     srvrmgr.SrvrMgr
+	duration, error             prometheus.Gauge
+	totalScrapes                prometheus.Counter
 	// scrapeErrors         *prometheus.CounterVec
 	scrapeErrors    prometheus.Counter
 	gatewayServerUp prometheus.Gauge
@@ -64,7 +64,7 @@ var (
 )
 
 // NewExporter returns a new Siebel exporter for the provided args.
-func NewExporter(srvrmgr srvrmgr.SrvrMgr, defaultMetricsFile, customMetricsFile, dateFormat string, overrideEmptyMetrics, disableExtendedMetrics bool) *Exporter {
+func NewExporter(srvrmgr srvrmgr.SrvrMgr, defaultMetricsFile, customMetricsFile, dateFormat string, disableEmptyMetricsOverride, disableExtendedMetrics bool) *Exporter {
 	log.Debugln("NewExporter")
 
 	const (
@@ -81,14 +81,14 @@ func NewExporter(srvrmgr srvrmgr.SrvrMgr, defaultMetricsFile, customMetricsFile,
 	// }
 
 	return &Exporter{
-		namespace:              namespace,
-		subsystem:              subsystem,
-		dateFormat:             dateFormat,
-		overrideEmptyMetrics:   overrideEmptyMetrics,
-		disableExtendedMetrics: disableExtendedMetrics,
-		defaultMetricsFile:     defaultMetricsFile,
-		customMetricsFile:      customMetricsFile,
-		srvrmgr:                srvrmgr,
+		namespace:                   namespace,
+		subsystem:                   subsystem,
+		dateFormat:                  dateFormat,
+		disableEmptyMetricsOverride: disableEmptyMetricsOverride,
+		disableExtendedMetrics:      disableExtendedMetrics,
+		defaultMetricsFile:          defaultMetricsFile,
+		customMetricsFile:           customMetricsFile,
+		srvrmgr:                     srvrmgr,
 		duration: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
@@ -253,7 +253,7 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		}
 
 		scrapeStart := time.Now()
-		if err = scrapeMetric(e.namespace, e.dateFormat, e.overrideEmptyMetrics, e.srvrmgr, ch, metric); err != nil {
+		if err = scrapeMetric(e.namespace, e.dateFormat, e.disableEmptyMetricsOverride, e.srvrmgr, ch, metric); err != nil {
 			log.Errorln("Error scraping for '" + metric.Subsystem + "', '" + fmt.Sprintf("%+v", metric.Help) + "' :\n" + err.Error())
 			// e.scrapeErrors.WithLabelValues(metric.Subsystem).Inc()
 			e.scrapeErrors.Inc()
@@ -265,14 +265,14 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 }
 
 // interface method to call ScrapeGenericValues using Metric struct values
-func scrapeMetric(namespace string, dateFormat string, overrideEmptyMetrics bool, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric, metricDefinition Metric) error {
-	return scrapeGenericValues(namespace, dateFormat, overrideEmptyMetrics, srvrmgr, ch,
+func scrapeMetric(namespace string, dateFormat string, disableEmptyMetricsOverride bool, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric, metricDefinition Metric) error {
+	return scrapeGenericValues(namespace, dateFormat, disableEmptyMetricsOverride, srvrmgr, ch,
 		metricDefinition.Subsystem, metricDefinition.Labels, metricDefinition.Help, metricDefinition.HelpField, metricDefinition.Type,
 		metricDefinition.Buckets, metricDefinition.FieldToAppend, metricDefinition.IgnoreZeroResult, metricDefinition.ValueMap, metricDefinition.Command)
 }
 
 // generic method for retrieving metrics.
-func scrapeGenericValues(namespace string, dateFormat string, overrideEmptyMetrics bool, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric,
+func scrapeGenericValues(namespace string, dateFormat string, disableEmptyMetricsOverride bool, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric,
 	metricSubsystem string, labels []string, metricsHelp map[string]string, metricsHelpField map[string]string, metricsTypes map[string]string,
 	metricsBuckets map[string]map[string]string, fieldToAppend string, ignoreZeroResult bool, valueMap map[string]map[string]string, command string) error {
 	metricsCount := 0
@@ -366,7 +366,7 @@ func scrapeGenericValues(namespace string, dateFormat string, overrideEmptyMetri
 		return nil
 	}
 
-	err := generatePrometheusMetrics(srvrmgr, dataRowToPrometheusMetricConverter, command, dateFormat, overrideEmptyMetrics)
+	err := generatePrometheusMetrics(srvrmgr, dataRowToPrometheusMetricConverter, command, dateFormat, disableEmptyMetricsOverride)
 	log.Debugln("ScrapeGenericValues | metricsCount: " + fmt.Sprint(metricsCount))
 	if err != nil {
 		return err
@@ -379,7 +379,7 @@ func scrapeGenericValues(namespace string, dateFormat string, overrideEmptyMetri
 }
 
 // Parse srvrmgr result and call parsing function to each row
-func generatePrometheusMetrics(srvrmgr srvrmgr.SrvrMgr, dataRowToPrometheusMetricConverter func(row map[string]string) error, command string, dateFormat string, overrideEmptyMetrics bool) error {
+func generatePrometheusMetrics(srvrmgr srvrmgr.SrvrMgr, dataRowToPrometheusMetricConverter func(row map[string]string) error, command string, dateFormat string, disableEmptyMetricsOverride bool) error {
 	log.Debugln("generatePrometheusMetrics")
 
 	commandResult, err := srvrmgr.ExecuteCommand(command)
@@ -423,7 +423,7 @@ func generatePrometheusMetrics(srvrmgr srvrmgr.SrvrMgr, dataRowToPrometheusMetri
 			colValue := strings.TrimSpace(rawRow[:colMaxLen])
 
 			// If value is empty then set it to default "0"
-			if overrideEmptyMetrics && len(colValue) == 0 {
+			if len(colValue) == 0 && !disableEmptyMetricsOverride {
 				colValue = "0"
 			}
 
