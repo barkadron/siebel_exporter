@@ -54,6 +54,7 @@ CP_END_TIME = "Time the Component was ended."
 "Shutting Down" = "5"
 "Shutdown" = "6"
 "Unavailable" = "7"
+"Not Online" = "8" # Actual status which is not in the documentation
 
 [[Metric]]
 Command = "list statistics show STAT_NAME, SD_DESC, CURR_VAL"
