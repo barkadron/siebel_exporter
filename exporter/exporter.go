@@ -193,10 +193,15 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 			return
 		}
 	case srvrmgr.Connected:
-		if !e.srvrmgr.PingGatewayServer() {
+		log.Debugln("Ping Siebel Gateway Server...")
+		_, err := e.srvrmgr.ExecuteCommand("list ent param MaxThreads show PA_VALUE")
+		if err != nil {
+			log.Errorln("Error pinging Siebel Gateway Server: \n", err, "\n")
+			e.srvrmgr.Disconnect()
 			log.Warnln("Unable to scrape: srvrmgr was lost connection to the Siebel Gateway Server. Will try to reconnect on next scrape.")
 			return
 		}
+		log.Debugln("Successfully pinged Siebel Gateway Server.")
 	default:
 		log.Errorln("Unable to scrape: unknown status of srvrmgr connection.")
 		return

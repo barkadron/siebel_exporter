@@ -1,6 +1,7 @@
 package srvrmgr
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -36,8 +37,7 @@ type SrvrMgr interface {
 	Disconnect() error
 	GetStatus() Status
 	ExecuteCommand(cmd string) (string, error)
-	GetApplicationServerName() string
-	PingGatewayServer() bool
+	// GetApplicationServerName() string
 }
 
 // NewSrvrmgr returns a new srvrmgr struct for provided connection command.
@@ -84,28 +84,16 @@ func (sm *srvrMgr) Disconnect() error {
 	return sm.disconnect()
 }
 
-func (sm *srvrMgr) GetApplicationServerName() string {
-	return sm.serverName
-}
+// func (sm *srvrMgr) GetApplicationServerName() string {
+// 	return sm.serverName
+// }
 
 func (sm *srvrMgr) ExecuteCommand(cmd string) (string, error) {
 	cmd = strings.TrimSpace(cmd)
 	if strings.ToLower(cmd) == "exit" || strings.ToLower(cmd) == "quit" {
-		return "", sm.disconnect()
+		return "", errors.New("Error! Command '" + cmd + "' not allowed.")
 	}
 	return sm.executeCommand(cmd)
-}
-
-func (sm *srvrMgr) PingGatewayServer() bool {
-	log.Debugln("Ping Siebel Gateway Server...")
-	_, err := sm.executeCommand("list ent param MaxThreads show PA_VALUE")
-	if err != nil {
-		log.Errorln("Error pinging Siebel Gateway Server: \n", err, "\n")
-		sm.disconnect()
-		return false // Down
-	}
-	log.Debugln("Successfully pinged Siebel Gateway Server.")
-	return true // Up
 }
 
 func (sm *srvrMgr) connect() error {

@@ -159,9 +159,9 @@ func NewShell(readBufferSize int) Shell {
 }
 
 func (s *shell) ExecuteCommand(cmd string) (string, error) {
-	if strings.ToLower(strings.TrimSpace(cmd)) == "exit" {
-		s.terminate()
-		return "", nil
+	cmd = strings.TrimSpace(cmd)
+	if strings.ToLower(cmd) == "exit" {
+		return "", errors.New("Error! Command '" + cmd + "' not allowed.")
 	}
 	return s.executeCommand(cmd)
 }
