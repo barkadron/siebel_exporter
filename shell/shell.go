@@ -4,7 +4,6 @@ import (
 	"errors"
 	"io"
 	"os/exec"
-	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -252,10 +251,6 @@ func (s *shell) executeCommand(cmd string) (string, error) {
 		return "", errors.New("unable to execute command because stderrreader is not ready")
 	}
 
-	// Check for '/p password' in command and remove it from log
-	cmdForLog := regexp.MustCompile(`(?i)(.*?\/p\s+)([^\s]+)(\s+.*|$)`).ReplaceAllString(cmd, "$1********$3")
-	log.Debugf("	'%s'", cmdForLog)
-
 	// @FIXME: this is unstable, need more time...
 	// timeoutCh := make(chan error, 1)
 	// go func() {
@@ -298,7 +293,6 @@ func (s *shell) executeCommand(cmd string) (string, error) {
 	}
 
 	cmdResult = strings.Trim(cmdResult, " \n")
-	log.Debugf("	cmdResult:\n%v", cmdResult)
 
 	return cmdResult, cmdError
 }

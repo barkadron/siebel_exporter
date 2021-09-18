@@ -182,6 +182,10 @@ func (sm *srvrMgr) disconnect() error {
 func (sm *srvrMgr) executeCommand(cmd string) (string, error) {
 	log.Debugln("srvrmgr.executeCommand")
 
+	// Check for '/p password' substring in command and remove it from log
+	cmdForLog := regexp.MustCompile(`(?i)(.*?\/p\s+)([^\s]+)(\s+.*|$)`).ReplaceAllString(cmd, "$1********$3")
+	log.Debugf("	cmd: '%s'", cmdForLog)
+
 	result, err := sm.shell.ExecuteCommand(cmd)
 	if err != nil {
 		log.Errorln(err)
@@ -201,9 +205,9 @@ func (sm *srvrMgr) executeCommand(cmd string) (string, error) {
 		SBL-SCM-00008: Batch read operation failed
 	*/
 	if regexp.MustCompile(`SBL-[^-]+-\d+: Error reported on server`).MatchString(result) {
-		srvrmgrError := fmt.Errorf(result)
-		log.Errorln(srvrmgrError)
-		return "", srvrmgrError
+		err := fmt.Errorf(result)
+		log.Errorln(err)
+		return "", err
 	}
 
 	// Remove last row with srvrmgr command prompt ('srvrmgr:sbldev>' )
@@ -212,6 +216,8 @@ func (sm *srvrMgr) executeCommand(cmd string) (string, error) {
 	}
 
 	result = strings.Trim(result, " \n")
+
+	log.Debugf("	cmdResult:\n%v", result)
 
 	return result, nil
 }
