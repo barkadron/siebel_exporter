@@ -12,6 +12,42 @@ import (
 	"github.com/prometheus/common/log"
 )
 
+// status is an enumeration of shell statuses that represent a simple value.
+type status int
+
+// possible values for the 'status' enum.
+const (
+	_ status = iota
+	WaitingForCommand
+	CommandExecution
+	Termination
+	Terminated
+)
+
+type safeStatus struct {
+	sync.RWMutex
+	value status
+}
+
+func (ss *safeStatus) Get() status {
+	ss.RLock()
+	defer ss.RUnlock()
+	return ss.value
+}
+
+func (ss *safeStatus) Set(value status) error {
+	ss.Lock()
+	defer ss.Unlock()
+	if ss.value == Terminated {
+		return errors.New("this status transition not allowed")
+	}
+	if ss.value == Termination && value != Terminated {
+		return errors.New("this status transition not allowed")
+	}
+	ss.value = value
+	return nil
+}
+
 type shell struct {
 	cmd                *exec.Cmd
 	readBufferSize     int
@@ -25,6 +61,9 @@ type shell struct {
 	errCh              *chan error
 	stdOutReaderQuitCh *chan bool
 	stdErrReaderQuitCh *chan bool
+	status             safeStatus
+	execCmdMu          sync.Mutex
+	terminateMu        sync.Mutex
 }
 
 // Shell is a public interface for the shell struct (https://stackoverflow.com/a/53034166).
@@ -89,6 +128,9 @@ func NewShell(readBufferSize int) Shell {
 		errCh:              &errCh,
 		stdOutReaderQuitCh: &stdOutReaderQuitCh,
 		stdErrReaderQuitCh: &stdErrReaderQuitCh,
+		status:             safeStatus{},
+		execCmdMu:          sync.Mutex{},
+		terminateMu:        sync.Mutex{},
 	}
 
 	var readyToReadWG sync.WaitGroup
@@ -154,6 +196,11 @@ func NewShell(readBufferSize int) Shell {
 	}()
 
 	readyToReadWG.Wait()
+	if err := s.status.Set(WaitingForCommand); err != nil {
+		log.Errorln(err)
+		panic(err)
+	}
+
 	log.Debugln("	- shell-object is ready.")
 	return s
 }
@@ -173,6 +220,30 @@ func (s *shell) Terminate() {
 
 func (s *shell) executeCommand(cmd string) (string, error) {
 	log.Debugln("shell.executeCommand")
+
+	s.execCmdMu.Lock()
+	defer s.execCmdMu.Unlock()
+
+	status := s.status.Get()
+	if status == Terminated {
+		return "", errors.New("Error! Execution of command '" + cmd + "' not allowed because shell terminated.")
+	}
+
+	if status == Termination {
+		if strings.ToLower(cmd) != "exit" {
+			return "", errors.New("Error! Execution of command '" + cmd + "' not allowed while shell is in process of termination.")
+		}
+		if err := s.status.Set(Terminated); err != nil {
+			log.Errorln(err)
+			return "", err
+		}
+	} else {
+		if err := s.status.Set(CommandExecution); err != nil {
+			log.Errorln(err)
+			return "", err
+		}
+		defer s.status.Set(WaitingForCommand)
+	}
 
 	if !s.stdOutReaderReady {
 		return "", errors.New("unable to execute command because stdoutreader is not ready")
@@ -234,6 +305,18 @@ func (s *shell) executeCommand(cmd string) (string, error) {
 
 func (s *shell) terminate() {
 	log.Debugln("shell.terminate")
+
+	s.terminateMu.Lock()
+	defer s.terminateMu.Unlock()
+
+	status := s.status.Get()
+	if status == Termination || status == Terminated {
+		return
+	}
+
+	if err := s.status.Set(Termination); err != nil {
+		log.Errorln(err)
+	}
 
 	defer close(*s.stdErrReaderQuitCh)
 	defer close(*s.stdOutReaderQuitCh)
