@@ -31,12 +31,14 @@ type safeStatus struct {
 func (ss *safeStatus) Get() status {
 	ss.RLock()
 	defer ss.RUnlock()
+
 	return ss.value
 }
 
 func (ss *safeStatus) Set(value status) error {
 	ss.Lock()
 	defer ss.Unlock()
+
 	if ss.value == Terminated {
 		return errors.New("this status transition not allowed")
 	}
@@ -47,22 +49,32 @@ func (ss *safeStatus) Set(value status) error {
 	return nil
 }
 
+type pipeReader struct {
+	pipe     *io.ReadCloser
+	resultCh chan string
+	errorCh  chan error
+	quitCh   chan bool
+	ready    bool
+}
+
+func newPipeReader(pipe *io.ReadCloser) *pipeReader {
+	return &pipeReader{
+		pipe:     pipe,
+		resultCh: make(chan string, 1),
+		errorCh:  make(chan error, 1),
+		quitCh:   make(chan bool, 1),
+		ready:    false,
+	}
+}
+
 type shell struct {
-	cmd                *exec.Cmd
-	readBufferSize     int
-	stdInPipe          *io.WriteCloser
-	stdOutPipe         *io.ReadCloser
-	stdErrPipe         *io.ReadCloser
-	stdOutReaderReady  bool
-	stdErrReaderReady  bool
-	outCh              *chan string
-	outErrCh           *chan error
-	errCh              *chan error
-	stdOutReaderQuitCh *chan bool
-	stdErrReaderQuitCh *chan bool
-	status             safeStatus
-	execCmdMu          sync.Mutex
-	terminateMu        sync.Mutex
+	cmd          *exec.Cmd
+	status       safeStatus
+	stdInPipe    *io.WriteCloser
+	stdOutReader *pipeReader
+	stdErrReader *pipeReader
+	execCmdMu    sync.Mutex
+	terminateMu  sync.Mutex
 }
 
 // Shell is a public interface for the shell struct (https://stackoverflow.com/a/53034166).
@@ -74,16 +86,9 @@ type Shell interface {
 func NewShell(readBufferSize int) Shell {
 	log.Debugln("NewShell")
 
-	var shellType string
-
-	switch strings.ToLower(runtime.GOOS) {
-	case "linux":
-		shellType = "bash"
-	// @TODO: Need universal solution for Linux and Windows
-	// case "windows":
-	// 	shellType = "cmd"
-	default:
-		panic("Error! Unsupported OS '" + runtime.GOOS + "'.")
+	shellType, err := getShellType()
+	if err != nil {
+		panic(err)
 	}
 
 	cmd := exec.Command(shellType)
@@ -106,97 +111,26 @@ func NewShell(readBufferSize int) Shell {
 		panic(err)
 	}
 
-	log.Debugln("	- create channels.")
-	outCh := make(chan string, 1)
-	outErrCh := make(chan error, 1)
-	errCh := make(chan error, 1)
-	stdOutReaderQuitCh := make(chan bool, 1)
-	stdErrReaderQuitCh := make(chan bool, 1)
-
 	log.Debugln("	- init shell-object.")
 	s := &shell{
-		cmd:                cmd,
-		readBufferSize:     readBufferSize,
-		stdInPipe:          &stdInPipe,
-		stdOutPipe:         &stdOutPipe,
-		stdErrPipe:         &stdErrPipe,
-		stdOutReaderReady:  false,
-		stdErrReaderReady:  false,
-		outCh:              &outCh,
-		outErrCh:           &outErrCh,
-		errCh:              &errCh,
-		stdOutReaderQuitCh: &stdOutReaderQuitCh,
-		stdErrReaderQuitCh: &stdErrReaderQuitCh,
-		status:             safeStatus{},
-		execCmdMu:          sync.Mutex{},
-		terminateMu:        sync.Mutex{},
+		cmd:          cmd,
+		stdInPipe:    &stdInPipe,
+		status:       safeStatus{},
+		execCmdMu:    sync.Mutex{},
+		terminateMu:  sync.Mutex{},
+		stdOutReader: newPipeReader(&stdOutPipe),
+		stdErrReader: newPipeReader(&stdErrPipe),
 	}
 
 	var readyToReadWG sync.WaitGroup
 	readyToReadWG.Add(2)
 
-	// Reader for StdErr
-	go func() {
-		log.Debugln("	- run reader for StdErr.")
-		defer close(errCh)
-		for {
-			select {
-			case <-stdErrReaderQuitCh:
-				s.stdErrReaderReady = false
-				log.Debugln("Exit from StdErrReader.")
-				return
-			default:
-				if !s.stdErrReaderReady {
-					s.stdErrReaderReady = true
-					readyToReadWG.Done()
-				}
-				log.Debugln("StdErrReader waiting for data in StdErrPipe...")
-				if stdErrRes, err := read(s.stdErrPipe, s.readBufferSize); err != nil {
-					log.Debugln("StdErrReader received error.")
-					// log.Debugln("	StdErrReader >>> ", err)
-					errCh <- err
-				} else {
-					log.Debugln("StdErrReader received data.")
-					// log.Debugln("	StdErrReader >>> ", stdErrRes)
-					errCh <- errors.New(stdErrRes)
-				}
-			}
-		}
-	}()
-
-	// Reader for StdOut
-	go func() {
-		log.Debugln("	- run reader for StdOut.")
-		defer close(outCh)
-		defer close(outErrCh)
-		for {
-			select {
-			case <-stdOutReaderQuitCh:
-				s.stdOutReaderReady = false
-				log.Debugln("Exit from StdOutReader.")
-				return
-			default:
-				if !s.stdOutReaderReady {
-					s.stdOutReaderReady = true
-					readyToReadWG.Done()
-				}
-				log.Debugln("StdOutReader waiting for data in StdOutPipe...")
-				if stdOutRes, err := read(s.stdOutPipe, s.readBufferSize); err != nil {
-					log.Debugln("StdOutReader received error.")
-					// log.Debugln("	StdOutReader >>> ", err)
-					outErrCh <- err
-				} else {
-					log.Debugln("StdOutReader received data.")
-					// log.Debugln("	StdOutReader >>> ", stdOutRes)
-					outCh <- stdOutRes
-				}
-			}
-		}
-	}()
+	go readFromStdErr(s, &readyToReadWG, readBufferSize)
+	go readFromStdOut(s, &readyToReadWG, readBufferSize)
 
 	readyToReadWG.Wait()
+
 	if err := s.status.Set(WaitingForCommand); err != nil {
-		log.Errorln(err)
 		panic(err)
 	}
 
@@ -244,10 +178,10 @@ func (s *shell) executeCommand(cmd string) (string, error) {
 		defer s.status.Set(WaitingForCommand)
 	}
 
-	if !s.stdOutReaderReady {
+	if !s.stdOutReader.ready {
 		return "", errors.New("unable to execute command because stdoutreader is not ready")
 	}
-	if !s.stdErrReaderReady {
+	if !s.stdErrReader.ready {
 		return "", errors.New("unable to execute command because stderrreader is not ready")
 	}
 
@@ -273,12 +207,15 @@ func (s *shell) executeCommand(cmd string) (string, error) {
 	)
 
 	select {
-	case cmdResult = <-*s.outCh:
-		log.Debugln("Command output received from outCh.")
-	case cmdError = <-*s.outErrCh:
-		log.Debugln("Command error received from outErrCh.")
-	case cmdError = <-*s.errCh:
-		log.Debugln("Command error received from errCh.")
+	case cmdResult = <-s.stdOutReader.resultCh:
+		log.Debugln("Command output received from stdOut.")
+	case cmdError = <-s.stdOutReader.errorCh:
+		log.Debugln("Command error received from stdOutErr.")
+	case err := <-s.stdErrReader.resultCh:
+		cmdError = errors.New(err)
+		log.Debugln("Command error received from stdErr.")
+	case cmdError = <-s.stdErrReader.errorCh:
+		log.Debugln("Command error received from stdErrErr.")
 		// case cmdError = <-timeoutCh:
 		// 	log.Debugln("[timeout]")
 	}
@@ -312,12 +249,12 @@ func (s *shell) terminate() {
 		log.Errorln(err)
 	}
 
-	defer close(*s.stdErrReaderQuitCh)
-	defer close(*s.stdOutReaderQuitCh)
+	defer close(s.stdErrReader.quitCh)
+	defer close(s.stdOutReader.quitCh)
 
 	log.Debugln("Send signal to quit channels.")
-	*s.stdErrReaderQuitCh <- true
-	*s.stdOutReaderQuitCh <- true
+	s.stdErrReader.quitCh <- true
+	s.stdOutReader.quitCh <- true
 
 	s.executeCommand("exit")
 
@@ -328,17 +265,89 @@ func (s *shell) terminate() {
 		log.Errorln("Error on closing stdInPipe:", err)
 	}
 	log.Debugln("Close stdOutPipe.")
-	if err := (*s.stdOutPipe).Close(); err != nil {
+	if err := (*s.stdOutReader.pipe).Close(); err != nil {
 		log.Errorln("Error on closing stdOutPipe:", err)
 	}
 	log.Debugln("Close stdErrPipe.")
-	if err := (*s.stdErrPipe).Close(); err != nil {
+	if err := (*s.stdErrReader.pipe).Close(); err != nil {
 		log.Errorln("Error on closing stdErrPipe:", err)
 	}
 
 	log.Debugln("Call cmd.Wait.")
 	if err := s.cmd.Wait(); err != nil {
 		log.Errorln("Error on cmd.Wait:", err)
+	}
+}
+
+func getShellType() (string, error) {
+	switch strings.ToLower(runtime.GOOS) {
+	case "linux":
+		return "bash", nil
+	// @TODO: Need universal solution for Linux and Windows
+	// case "windows":
+	// 	return "cmd", nil
+	default:
+		return "", errors.New("unsupported os '" + runtime.GOOS + "'")
+	}
+}
+
+func readFromStdErr(s *shell, wg *sync.WaitGroup, readBufferSize int) {
+	log.Debugln("	- run reader for StdErr.")
+	defer close(s.stdErrReader.resultCh)
+	defer close(s.stdErrReader.errorCh)
+
+	for {
+		select {
+		case <-s.stdErrReader.quitCh:
+			s.stdErrReader.ready = false
+			log.Debugln("Exit from StdErrReader.")
+			return
+		default:
+			if !s.stdErrReader.ready {
+				s.stdErrReader.ready = true
+				wg.Done()
+			}
+			log.Debugln("StdErrReader waiting for data in StdErrPipe...")
+			if stdErrRes, err := read(s.stdErrReader.pipe, readBufferSize); err != nil {
+				log.Debugln("StdErrReader error.")
+				// log.Debugln("	StdErrReader >>> ", err)
+				s.stdErrReader.errorCh <- err
+			} else {
+				log.Debugln("StdErrReader received data.")
+				// log.Debugln("	StdErrReader >>> ", stdErrRes)
+				s.stdErrReader.resultCh <- stdErrRes
+			}
+		}
+	}
+}
+
+func readFromStdOut(s *shell, wg *sync.WaitGroup, readBufferSize int) {
+	log.Debugln("	- run reader for StdOut.")
+	defer close(s.stdOutReader.resultCh)
+	defer close(s.stdOutReader.errorCh)
+
+	for {
+		select {
+		case <-s.stdOutReader.quitCh:
+			s.stdOutReader.ready = false
+			log.Debugln("Exit from StdOutReader.")
+			return
+		default:
+			if !s.stdOutReader.ready {
+				s.stdOutReader.ready = true
+				wg.Done()
+			}
+			log.Debugln("StdOutReader waiting for data in StdOutPipe...")
+			if stdOutRes, err := read(s.stdOutReader.pipe, readBufferSize); err != nil {
+				log.Debugln("StdOutReader error.")
+				// log.Debugln("	StdOutReader >>> ", err)
+				s.stdOutReader.errorCh <- err
+			} else {
+				log.Debugln("StdOutReader received data.")
+				// log.Debugln("	StdOutReader >>> ", stdOutRes)
+				s.stdOutReader.resultCh <- stdOutRes
+			}
+		}
 	}
 }
 
