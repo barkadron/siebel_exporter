@@ -27,8 +27,7 @@ type shell struct {
 	stdErrReaderQuitCh *chan bool
 }
 
-// Public interface
-// https://stackoverflow.com/a/53034166
+// Shell is a public interface for the shell struct (https://stackoverflow.com/a/53034166).
 type Shell interface {
 	ExecuteCommand(cmd string) (string, error)
 	Terminate()
@@ -163,9 +162,8 @@ func (s *shell) ExecuteCommand(cmd string) (string, error) {
 	if strings.ToLower(strings.TrimSpace(cmd)) == "exit" {
 		s.terminate()
 		return "", nil
-	} else {
-		return s.executeCommand(cmd)
 	}
+	return s.executeCommand(cmd)
 }
 
 func (s *shell) Terminate() {

@@ -20,7 +20,7 @@ import (
 	"github.com/prometheus/common/log"
 )
 
-// Metrics object definition
+// Metric object description
 type Metric struct {
 	Command          string
 	Subsystem        string
@@ -35,7 +35,7 @@ type Metric struct {
 	Extended         bool
 }
 
-// Used to load multiple metrics from file
+// Metrics used to load multiple metrics from file
 type Metrics struct {
 	Metric []Metric
 }
@@ -107,7 +107,7 @@ func NewExporter(srvrmgr srvrmgr.SrvrMgr, defaultMetricsFile, customMetricsFile,
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      "scrape_errors_total",
-			Help:      "Total number of times an error occured scraping a Siebel.",
+			Help:      "Total number of times an error occurred scraping a Siebel.",
 			// ConstLabels: labels,
 			// }, []string{"collector"}),
 		}),

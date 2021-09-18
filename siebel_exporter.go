@@ -41,7 +41,7 @@ var (
 
 func main() {
 	const exporterName = "siebel_exporter"
-	var srvrMgr srvrmgr.SrvrMgr = nil
+	var srvrMgr srvrmgr.SrvrMgr
 
 	// Parse flags
 	log.AddFlags(kingpin.CommandLine)

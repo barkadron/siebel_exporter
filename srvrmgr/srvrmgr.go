@@ -30,8 +30,7 @@ type srvrMgr struct {
 	shell          shell.Shell
 }
 
-// Public interface
-// https://stackoverflow.com/a/53034166
+// SrvrMgr is a public interface for the srvrmgr struct (https://stackoverflow.com/a/53034166).
 type SrvrMgr interface {
 	Connect() error
 	Disconnect() error
@@ -41,6 +40,7 @@ type SrvrMgr interface {
 	PingGatewayServer() bool
 }
 
+// NewSrvrmgr returns a new srvrmgr struct for provided connection command.
 func NewSrvrmgr(connectCmd string, readBufferSize int) SrvrMgr {
 	log.Debugln("NewSrvrmgr")
 
@@ -92,9 +92,8 @@ func (sm *srvrMgr) ExecuteCommand(cmd string) (string, error) {
 	cmd = strings.TrimSpace(cmd)
 	if strings.ToLower(cmd) == "exit" || strings.ToLower(cmd) == "quit" {
 		return "", sm.disconnect()
-	} else {
-		return sm.executeCommand(cmd)
 	}
+	return sm.executeCommand(cmd)
 }
 
 func (sm *srvrMgr) PingGatewayServer() bool {
