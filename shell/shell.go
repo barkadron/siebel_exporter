@@ -17,10 +17,10 @@ type status int
 // possible values for the 'status' enum.
 const (
 	_ status = iota
-	WaitingForCommand
-	CommandExecution
-	Termination
-	Terminated
+	waitingForCommand
+	commandExecution
+	termination
+	terminated
 )
 
 type safeStatus struct {
@@ -39,10 +39,10 @@ func (ss *safeStatus) Set(value status) error {
 	ss.Lock()
 	defer ss.Unlock()
 
-	if ss.value == Terminated {
+	if ss.value == terminated {
 		return errors.New("this status transition not allowed")
 	}
-	if ss.value == Termination && value != Terminated {
+	if ss.value == termination && value != terminated {
 		return errors.New("this status transition not allowed")
 	}
 	ss.value = value
@@ -130,7 +130,7 @@ func NewShell(readBufferSize int) Shell {
 
 	readyToReadWG.Wait()
 
-	if err := s.status.Set(WaitingForCommand); err != nil {
+	if err := s.status.Set(waitingForCommand); err != nil {
 		panic(err)
 	}
 
@@ -158,24 +158,24 @@ func (s *shell) executeCommand(cmd string) (string, error) {
 	defer s.execCmdMu.Unlock()
 
 	status := s.status.Get()
-	if status == Terminated {
+	if status == terminated {
 		return "", errors.New("Error! Execution of command '" + cmd + "' not allowed because shell terminated.")
 	}
 
-	if status == Termination {
+	if status == termination {
 		if strings.ToLower(cmd) != "exit" {
 			return "", errors.New("Error! Execution of command '" + cmd + "' not allowed while shell is in process of termination.")
 		}
-		if err := s.status.Set(Terminated); err != nil {
+		if err := s.status.Set(terminated); err != nil {
 			log.Errorln(err)
 			return "", err
 		}
 	} else {
-		if err := s.status.Set(CommandExecution); err != nil {
+		if err := s.status.Set(commandExecution); err != nil {
 			log.Errorln(err)
 			return "", err
 		}
-		defer s.status.Set(WaitingForCommand)
+		defer s.status.Set(waitingForCommand)
 	}
 
 	if !s.stdOutReader.ready {
@@ -241,11 +241,11 @@ func (s *shell) terminate() {
 	defer s.terminateMu.Unlock()
 
 	status := s.status.Get()
-	if status == Termination || status == Terminated {
+	if status == termination || status == terminated {
 		return
 	}
 
-	if err := s.status.Set(Termination); err != nil {
+	if err := s.status.Set(termination); err != nil {
 		log.Errorln(err)
 	}
 
