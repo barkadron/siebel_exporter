@@ -17,7 +17,7 @@ import (
 
 var (
 	srvrmgrConnectCmd = kingpin.Flag("srvrmgr.connect-command", "Command for connect to srvrmgr. (env: SRVRMGR_CONNECT_CMD).").Default(getEnv("SRVRMGR_CONNECT_CMD", "")).String() // Example: "source /siebel/ses/siebsrvr/siebenv.sh && srvrmgr /g localhost /e SBA_82 /s sbldev /u SADMIN /p SADMIN /q"
-	readBufferSize    = kingpin.Flag("srvrmgr.read-buffer-size", "Size (in bytes) of buffer for reading command output. (env: SRVRMGR_READ_BUFFER_SIZE).").Default(getEnv("SRVRMGR_READ_BUFFER_SIZE", "1024")).Int()
+	readBufferSize    = kingpin.Flag("srvrmgr.read-buffer-size", "Size (in bytes) of buffer for reading command output. (env: SRVRMGR_READ_BUFFER_SIZE).").Default(getEnv("SRVRMGR_READ_BUFFER_SIZE", "4096")).Int()
 	dateFormat        = kingpin.Flag("srvrmgr.date-format", "Date format (in GO-style) used by srvrmgr. Default value is equal to 'yyyy-mm-dd HH:MM:SS'. (env: SRVRMGR_DATE_FORMAT).").Default(getEnv("SRVRMGR_DATE_FORMAT", "2006-01-02 15:04:05")).String() // yyyy-mm-dd HH:MM:SS
 	// commandTimeout    = kingpin.Flag("srvrmgr.command-timeout", "Maximum duration to wait for command execution. (env: SRVRMGR_COMMAND_TIMEOUT).").Default(getEnv("SRVRMGR_COMMAND_TIMEOUT", "5")).Int()
 
