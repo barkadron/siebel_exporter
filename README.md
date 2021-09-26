@@ -17,6 +17,10 @@ Pre-compiled versions for Linux 64 bit can be found under [releases](https://git
 
 Ensure that the environment variable `SRVRMGR_CONNECT_CMD` is set correctly before starting.
 
+> ATTENTION:  
+It is imperative that the command contains the `/s` flag indicating a specific server.  
+Otherwise, the connection will not be established.  
+
 For example:
 
 ```bash
@@ -30,29 +34,17 @@ export SRVRMGR_CONNECT_CMD="srvrmgr /g sbldevgtw /e SBA_82 /s sbldevapp /u SADMI
 /path/to/binary/siebel_exporter --log.level error
 ```
 
-> ATTENTION:  
-It is imperative that the command contains the `/s` flag indicating a specific server.  
-Otherwise, the connection will not be established.  
-
 ## Usage
 
 ```text
 Usage of siebel_exporter:
-
-    --log.level value
-        Only log messages with the given severity or above. Valid levels: [debug, info, warn, error, fatal].
-        Default: "info".
-
-    --log.format value
-        If set use a syslog logger or JSON logging.
-        Default: "stderr".
 
     --srvrmgr.connect-command (env: SRVRMGR_CONNECT_CMD)
         Command for connect to srvrmgr.
     
     --srvrmgr.read-buffer-size (env: SRVRMGR_READ_BUFFER_SIZE)
         Size of buffer for reading command output.
-        Default: "1024".
+        Default: "4096".
     
     --srvrmgr.date-format (env: SRVRMGR_DATE_FORMAT)
         Date format (in GO-style) used by srvrmgr.
@@ -65,9 +57,13 @@ Usage of siebel_exporter:
     --exporter.custom-metrics (env: EXP_CUSTOM_METRICS)
         Path to TOML-file that may contain various custom metrics.
     
-    --exporter.override-empty-metrics (env: EXP_OVERRIDE_EMPTY_METRICS)
-        Override empty metric values with '0'.
-        Default: "true".
+    --exporter.disable-empty-metrics-override (env: EXP_DISABLE_EMPTY_METRICS_OVERRIDE)
+        Disable overriding empty metric values with '0'.
+        Default: "false".
+
+    --exporter.disable-extended-metrics (env: EXP_DISABLE_EXTENDED_METRICS)
+        Disable metrics with Extended flag.
+        Default: "false".
 
     --web.listen-port (env: WEB_LISTEN_PORT)
         Port to listen on for web interface and metrics.
@@ -106,6 +102,14 @@ Usage of siebel_exporter:
     
     --tls.server-key
         Path to the PEM encoded key.
+
+    --log.level
+        Only log messages with the given severity or above. Valid levels: [debug, info, warn, error, fatal].
+        Default: "info".
+
+    --log.format
+        If set use a syslog logger or JSON logging.
+        Default: "stderr".
 ```
 
 ## Default metrics

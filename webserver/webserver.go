@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/common/version"
 )
 
+// StartWebServer create new http-server and start listening on provided port.
 func StartWebServer(ctx context.Context, listenPort int, metricsEndpoint string, readTimeout, writeTimeout, idleTimeout, shutdownTimeout, maxRequestsInFlight int, useTLS bool, serverCert, serverKey string, onShutdown *func(cancelShutdown context.CancelFunc)) {
 	log.Debugln("StartWebServer")
 
