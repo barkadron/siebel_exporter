@@ -187,7 +187,7 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 	case srvrmgr.Connecting:
 		log.Warnln("Unable to scrape: srvrmgr is in process of connection to Siebel Gateway Server.")
 		return
-	case srvrmgr.Disconnect:
+	case srvrmgr.Disconnected:
 		log.Warnln("Unable to scrape: srvrmgr not connected to Siebel Gateway Server. Trying to connect...")
 		if err = e.srvrmgr.Connect(); err != nil {
 			return

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/barkadron/siebel_exporter/shell"
@@ -17,18 +18,63 @@ type Status int
 // Possible values for the Status enum.
 const (
 	_ Status = iota
-	Disconnect
+	Disconnected
 	Connecting
 	Disconnecting
 	Connected
+	ConnectionError
 )
+
+type safeStatus struct {
+	sync.RWMutex
+	value Status
+}
+
+func (ss *safeStatus) Get() Status {
+	ss.RLock()
+	defer ss.RUnlock()
+
+	return ss.value
+}
+
+func (ss *safeStatus) Set(value Status) error {
+	ss.Lock()
+	defer ss.Unlock()
+
+	ss.value = value
+	return nil
+}
+
+type safeServerName struct {
+	sync.RWMutex
+	value string
+}
+
+func (ssn *safeServerName) Get() string {
+	ssn.RLock()
+	defer ssn.RUnlock()
+
+	return ssn.value
+}
+
+func (ssn *safeServerName) Set(value string) error {
+	ssn.Lock()
+	defer ssn.Unlock()
+
+	ssn.value = value
+	return nil
+}
 
 type srvrMgr struct {
 	connectCmd     string
 	readBufferSize int
-	serverName     string
-	status         Status
+	serverName     safeServerName
+	status         safeStatus
 	shell          shell.Shell
+	execCmdMu      sync.Mutex
+	connectMu      sync.Mutex
+	reconnectMu    sync.Mutex
+	disconnectMu   sync.Mutex
 }
 
 // SrvrMgr is a public interface for the srvrmgr struct (https://stackoverflow.com/a/53034166).
@@ -64,16 +110,18 @@ func NewSrvrmgr(connectCmd string, readBufferSize int) SrvrMgr {
 	sm := &srvrMgr{
 		connectCmd:     connectCmd,
 		readBufferSize: readBufferSize,
-		serverName:     "",
-		status:         Disconnect,
+		serverName:     safeServerName{},
+		status:         safeStatus{},
 		shell:          nil,
+		execCmdMu:      sync.Mutex{},
+		connectMu:      sync.Mutex{},
+		reconnectMu:    sync.Mutex{},
+		disconnectMu:   sync.Mutex{},
 	}
 
-	return sm
-}
+	sm.status.Set(Disconnected)
 
-func (sm *srvrMgr) GetStatus() Status {
-	return sm.status
+	return sm
 }
 
 func (sm *srvrMgr) Connect() error {
@@ -84,13 +132,17 @@ func (sm *srvrMgr) Disconnect() error {
 	return sm.disconnect()
 }
 
+func (sm *srvrMgr) GetStatus() Status {
+	return sm.status.Get()
+}
+
 // func (sm *srvrMgr) GetApplicationServerName() string {
 // 	return sm.serverName
 // }
 
 func (sm *srvrMgr) ExecuteCommand(cmd string) (string, error) {
 	cmd = strings.TrimSpace(cmd)
-	if strings.ToLower(cmd) == "exit" || strings.ToLower(cmd) == "quit" {
+	if strings.ToLower(cmd) == "exit" || strings.ToLower(cmd) == "quit" || strings.Contains(strings.ToLower(cmd), "set server") {
 		return "", errors.New("Error! Command '" + cmd + "' not allowed.")
 	}
 	return sm.executeCommand(cmd)
@@ -98,38 +150,53 @@ func (sm *srvrMgr) ExecuteCommand(cmd string) (string, error) {
 
 func (sm *srvrMgr) connect() error {
 	log.Debugln("srvrmgr.connect")
-	if sm.status == Connected || sm.status == Connecting {
+
+	sm.connectMu.Lock()
+	defer sm.connectMu.Unlock()
+
+	status := sm.status.Get()
+	if status == Connected {
 		return nil
 	}
+	if status != Disconnected {
+		return errors.New("error! unable to connect, try later")
+	}
 
+	sm.status.Set(Connecting)
 	log.Debugln("Connecting to srvrmgr...")
 	sm.shell = shell.NewShell(sm.readBufferSize)
-	sm.status = Connecting
+
 	connRes, err := sm.executeCommand(sm.connectCmd)
 	if err != nil {
-		sm.status = Disconnect
-		// log.Errorln(err)
+		sm.status.Set(ConnectionError)
+		defer sm.disconnect()
+		log.Errorln(err)
 		return err
 	}
-	if strings.Contains(connRes, "Connected to 1 server(s)") {
-		// Set the actual server name
-		serverNameMatch := regexp.MustCompile("srvrmgr:([^>]+?)>").FindStringSubmatch(connRes)
-		if len(serverNameMatch) >= 1 {
-			sm.serverName = serverNameMatch[1]
-			sm.status = Connected
-			log.Infoln("Successfully connected to server: '" + sm.serverName + "'.")
-		} else {
-			defer sm.disconnect()
-			err := fmt.Errorf("error! Connection established, but server name not found. Did you forget to define '/s' argument in connection command?")
-			log.Errorln(err)
-			return err
-		}
-	} else {
+
+	// @FIXME: what if GW is up, but all APPs are down?
+	if !strings.Contains(connRes, "Connected to 1 server(s)") {
+		sm.status.Set(ConnectionError)
 		defer sm.disconnect()
 		err := fmt.Errorf("error! Connection established, but it looks like there are multiple servers. Did you forget to define '/s' argument in connection command?")
 		log.Errorln(err)
 		return err
 	}
+
+	// Set the actual server name
+	serverNameMatch := regexp.MustCompile("srvrmgr:([^>]+?)>").FindStringSubmatch(connRes)
+	if len(serverNameMatch) <= 1 {
+		sm.status.Set(ConnectionError)
+		defer sm.disconnect()
+		err := fmt.Errorf("error! Connection established, but server name not found. Did you forget to define '/s' argument in connection command?")
+		log.Errorln(err)
+		return err
+	}
+
+	serverName := serverNameMatch[1]
+	sm.serverName.Set(serverName)
+	sm.status.Set(Connected)
+	log.Infoln("Successfully connected to server: '" + serverName + "'.")
 
 	// Disable footer (last string in command result like "12 rows returned.")
 	sm.executeCommand("set footer false")
@@ -137,31 +204,27 @@ func (sm *srvrMgr) connect() error {
 	return nil
 }
 
-func (sm *srvrMgr) reconnect() error {
-	log.Debugln("srvrmgr.reconnect")
-	if err := sm.disconnect(); err != nil {
-		return err
-	}
-
-	time.Sleep(100 * time.Millisecond)
-
-	if err := sm.connect(); err != nil {
-		return err
-	}
-	return nil
-}
-
 func (sm *srvrMgr) disconnect() error {
 	log.Debugln("srvrmgr.disconnect")
-	if sm.status == Disconnect || sm.status == Disconnecting {
+
+	sm.disconnectMu.Lock()
+	defer sm.disconnectMu.Unlock()
+
+	status := sm.status.Get()
+	if status == Disconnected {
+		// return errors.New("error! srvrmgr already disconnected")
 		return nil
+	}
+	if status != Connected && status != ConnectionError {
+		return errors.New("error! unable to disconnect, try later")
 	}
 
 	log.Debugln("Disconnecting from srvrmgr...")
-	sm.status = Disconnecting
+	sm.status.Set(Disconnecting)
 	output, err := sm.executeCommand("quit")
-	sm.status = Disconnect
-	sm.serverName = ""
+
+	sm.status.Set(Disconnected)
+	sm.serverName.Set("")
 
 	sm.shell.Terminate()
 	sm.shell = nil
@@ -179,8 +242,38 @@ func (sm *srvrMgr) disconnect() error {
 	return nil
 }
 
+func (sm *srvrMgr) reconnect() error {
+	log.Debugln("srvrmgr.reconnect")
+
+	sm.reconnectMu.Lock()
+	defer sm.reconnectMu.Unlock()
+
+	if err := sm.disconnect(); err != nil {
+		return err
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	if err := sm.connect(); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (sm *srvrMgr) executeCommand(cmd string) (string, error) {
 	log.Debugln("srvrmgr.executeCommand")
+
+	sm.execCmdMu.Lock()
+	defer sm.execCmdMu.Unlock()
+
+	status := sm.status.Get()
+	if status == Disconnecting && cmd != "quit" {
+		return "", errors.New("error! unable to execute command, because srvrmgr is in process of disconnecting from server")
+	} else if status == Connecting && cmd != sm.connectCmd {
+		return "", errors.New("error! unable to execute command, because srvrmgr is in process of connecting to server")
+	} else if status != Connected {
+		return "", errors.New("error! unable to execute command, because srvrmgr is not connected to server")
+	}
 
 	// Check for '/p password' substring in command and remove it from log
 	cmdForLog := regexp.MustCompile(`(?i)(.*?\/p\s+)([^\s]+)(\s+.*|$)`).ReplaceAllString(cmd, "$1********$3")
@@ -211,8 +304,9 @@ func (sm *srvrMgr) executeCommand(cmd string) (string, error) {
 	}
 
 	// Remove last row with srvrmgr command prompt ('srvrmgr:sbldev>' )
-	if len(sm.serverName) > 0 {
-		result = regexp.MustCompile("srvrmgr:"+sm.serverName+">").ReplaceAllString(result, "")
+	serverName := sm.serverName.Get()
+	if len(serverName) > 0 {
+		result = regexp.MustCompile("srvrmgr:"+serverName+">").ReplaceAllString(result, "")
 	}
 
 	result = strings.Trim(result, " \n")
