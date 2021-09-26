@@ -83,6 +83,7 @@ type Shell interface {
 	Terminate()
 }
 
+// NewShell returns a new shell struct.
 func NewShell(readBufferSize int) Shell {
 	log.Debugln("NewShell")
 
