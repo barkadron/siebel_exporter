@@ -41,6 +41,7 @@ func (ss *safeStatus) Set(value Status) error {
 	ss.Lock()
 	defer ss.Unlock()
 
+	log.Debugf("Set srvrmgr status from '%v' to '%v'.", ss.value, value)
 	ss.value = value
 	return nil
 }
@@ -267,12 +268,16 @@ func (sm *srvrMgr) executeCommand(cmd string) (string, error) {
 	defer sm.execCmdMu.Unlock()
 
 	status := sm.status.Get()
-	if status == Disconnecting && cmd != "quit" {
-		return "", errors.New("error! unable to execute command, because srvrmgr is in process of disconnecting from server")
-	} else if status == Connecting && cmd != sm.connectCmd {
-		return "", errors.New("error! unable to execute command, because srvrmgr is in process of connecting to server")
+	if status == Disconnecting {
+		if cmd != "quit" {
+			return "", errors.New("error! unable to execute command '" + cmd + "', because srvrmgr is in process of disconnecting from server")
+		}
+	} else if status == Connecting {
+		if cmd != sm.connectCmd {
+			return "", errors.New("error! unable to execute command '" + cmd + "', because srvrmgr is in process of connecting to server")
+		}
 	} else if status != Connected {
-		return "", errors.New("error! unable to execute command, because srvrmgr is not connected to server")
+		return "", errors.New("error! unable to execute command '" + cmd + "', because srvrmgr is not connected to server")
 	}
 
 	// Check for '/p password' substring in command and remove it from log
