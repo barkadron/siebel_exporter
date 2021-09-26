@@ -54,11 +54,13 @@ CP_END_TIME = "Time the Component was ended."
 "Shutting Down" = "5"
 "Shutdown" = "6"
 "Unavailable" = "7"
+"Not Online" = "8" # Actual status which is not in the documentation
 
 [[Metric]]
 Command = "list statistics show STAT_NAME, SD_DESC, CURR_VAL"
 Subsystem = "list_statistics_server"
 FieldToAppend = "STAT_NAME"
+Extended = true
 [Metric.Help]
 CURR_VAL = "Current value of the Siebel Application Server Statistic."
 [Metric.HelpField]
@@ -68,6 +70,7 @@ CURR_VAL = "SD_DESC"
 Command = "list state values show STATEVAL_NAME, VD_DESC, CURR_VAL"
 Subsystem = "list_state_values_server"
 FieldToAppend = "STATEVAL_NAME"
+Extended = true
 [Metric.Help]
 CURR_VAL = "Current value of the Siebel Application Server State Value."
 [Metric.HelpField]
