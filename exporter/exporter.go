@@ -312,9 +312,13 @@ func scrapeGenericValues(namespace string, dateFormat string, disableEmptyMetric
 			// Value mapping
 			if metricMap, exists1 := valueMap[metricName]; exists1 {
 				if len(metricMap) > 0 {
-					if mappedValue, exists2 := metricMap[metricValue]; exists2 {
-						log.Debugln("	- [ValueMap]: Value '" + metricValue + "' converted to '" + mappedValue + "'.")
-						metricValue = mappedValue
+					// if mappedValue, exists2 := metricMap[metricValue]; exists2 {
+					for key, mappedValue := range metricMap {
+						if cleanName(key) == cleanName(metricValue) {
+							log.Debugln("	- [ValueMap]: Value '" + metricValue + "' converted to '" + mappedValue + "'.")
+							metricValue = mappedValue
+							break
+						}
 					}
 					// Add mapping to help
 					mappingHelp := " Value mapping: "
