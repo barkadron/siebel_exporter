@@ -258,7 +258,8 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		}
 
 		scrapeStart := time.Now()
-		if err = scrapeMetric(e.namespace, e.dateFormat, e.disableEmptyMetricsOverride, e.srvrmgr, ch, metric); err != nil {
+		// if err = scrapeMetric(e.namespace, e.dateFormat, e.disableEmptyMetricsOverride, e.srvrmgr, ch, metric); err != nil {
+		if err = scrapeGenericValues(e.namespace, e.dateFormat, e.disableEmptyMetricsOverride, e.srvrmgr, ch, metric); err != nil {
 			log.Errorln("Error scraping for '" + metric.Subsystem + "', '" + fmt.Sprintf("%+v", metric.Help) + "' :\n" + err.Error())
 			// e.scrapeErrors.WithLabelValues(metric.Subsystem).Inc()
 			e.scrapeErrors.Inc()
@@ -269,17 +270,9 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 	}
 }
 
-// interface method to call ScrapeGenericValues using Metric struct values
-func scrapeMetric(namespace string, dateFormat string, disableEmptyMetricsOverride bool, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric, metricDefinition Metric) error {
-	return scrapeGenericValues(namespace, dateFormat, disableEmptyMetricsOverride, srvrmgr, ch,
-		metricDefinition.Subsystem, metricDefinition.Labels, metricDefinition.Help, metricDefinition.HelpField, metricDefinition.Type,
-		metricDefinition.Buckets, metricDefinition.FieldToAppend, metricDefinition.IgnoreZeroResult, metricDefinition.ValueMap, metricDefinition.Command)
-}
-
 // generic method for retrieving metrics.
 func scrapeGenericValues(namespace string, dateFormat string, disableEmptyMetricsOverride bool, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric,
-	metricSubsystem string, labels []string, metricsHelp map[string]string, metricsHelpField map[string]string, metricsTypes map[string]string,
-	metricsBuckets map[string]map[string]string, fieldToAppend string, ignoreZeroResult bool, valueMap map[string]map[string]string, command string) error {
+	metric Metric) error {
 	metricsCount := 0
 	dataRowToPrometheusMetricConverter := func(row map[string]string) error {
 		log.Debugln("dataRowToPrometheusMetricConverter")
@@ -289,20 +282,20 @@ func scrapeGenericValues(namespace string, dateFormat string, disableEmptyMetric
 		labelsNamesCleaned := []string{}
 		labelsValues := []string{}
 		// if strings.Compare(fieldToAppend, "") == 0 {
-		for _, label := range labels {
+		for _, label := range metric.Labels {
 			labelsNamesCleaned = append(labelsNamesCleaned, cleanName(label))
 			labelsValues = append(labelsValues, row[label])
 		}
 		// }
 		// Construct Prometheus values to sent back
-		for metricName, metricHelp := range metricsHelp {
-			metricType := getMetricType(metricName, metricsTypes)
+		for metricName, metricHelp := range metric.Help {
+			metricType := getMetricType(metricName, metric.Type)
 			metricNameCleaned := cleanName(metricName)
-			if strings.Compare(fieldToAppend, "") != 0 {
-				metricNameCleaned = cleanName(row[fieldToAppend])
+			if strings.Compare(metric.FieldToAppend, "") != 0 {
+				metricNameCleaned = cleanName(row[metric.FieldToAppend])
 			}
 			// Dinamic help
-			if dinHelpName, exists1 := metricsHelpField[metricName]; exists1 {
+			if dinHelpName, exists1 := metric.HelpField[metricName]; exists1 {
 				if dinHelpValue, exists2 := row[dinHelpName]; exists2 {
 					log.Debugln("	- [DinamicHelp]: Help value '" + metricHelp + "' append with dinamic value '" + dinHelpValue + "'.")
 					metricHelp = metricHelp + " " + dinHelpValue
@@ -310,7 +303,7 @@ func scrapeGenericValues(namespace string, dateFormat string, disableEmptyMetric
 			}
 			metricValue := row[metricName]
 			// Value mapping
-			if metricMap, exists1 := valueMap[metricName]; exists1 {
+			if metricMap, exists1 := metric.ValueMap[metricName]; exists1 {
 				if len(metricMap) > 0 {
 					// if mappedValue, exists2 := metricMap[metricValue]; exists2 {
 					for key, mappedValue := range metricMap {
@@ -342,7 +335,7 @@ func scrapeGenericValues(namespace string, dateFormat string, disableEmptyMetric
 				continue
 			}
 
-			promMetricDesc := prometheus.NewDesc(prometheus.BuildFQName(namespace, metricSubsystem, metricNameCleaned), metricHelp, labelsNamesCleaned, nil)
+			promMetricDesc := prometheus.NewDesc(prometheus.BuildFQName(namespace, metric.Subsystem, metricNameCleaned), metricHelp, labelsNamesCleaned, nil)
 
 			if metricType == prometheus.GaugeValue || metricType == prometheus.CounterValue {
 				log.Debugln("	- Converting result looks like: [" + metricNameCleaned + "] : '" + fmt.Sprintf("%g", metricValueParsed) + "'.")
@@ -354,7 +347,7 @@ func scrapeGenericValues(namespace string, dateFormat string, disableEmptyMetric
 					continue
 				}
 				buckets := make(map[float64]uint64)
-				for field, le := range metricsBuckets[metricName] {
+				for field, le := range metric.Buckets[metricName] {
 					lelimit, err := strconv.ParseFloat(strings.TrimSpace(le), 64)
 					if err != nil {
 						log.Errorln("Unable to convert bucket limit value to float (metricName='" + metricName + "', bucketlimit='" + le + "', metricHelp='" + metricHelp + "')")
@@ -375,12 +368,12 @@ func scrapeGenericValues(namespace string, dateFormat string, disableEmptyMetric
 		return nil
 	}
 
-	err := generatePrometheusMetrics(srvrmgr, dataRowToPrometheusMetricConverter, command, dateFormat, disableEmptyMetricsOverride)
+	err := generatePrometheusMetrics(srvrmgr, dataRowToPrometheusMetricConverter, metric.Command, dateFormat, disableEmptyMetricsOverride)
 	log.Debugln("ScrapeGenericValues | metricsCount: " + fmt.Sprint(metricsCount))
 	if err != nil {
 		return err
 	}
-	if !ignoreZeroResult && metricsCount == 0 {
+	if !metric.IgnoreZeroResult && metricsCount == 0 {
 		return errors.New("ERROR! No metrics found while parsing. Metrics Count: '" + fmt.Sprint(metricsCount) + "'.")
 	}
 
