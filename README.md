@@ -126,6 +126,7 @@ The following metrics are exposed currently:
   - siebel_exporter_scrape_errors_total
   - siebel_exporter_scrapes_total
   - siebel_gateway_server_up
+  - siebel_application_server_up
   - siebel_list_server_sblsrvr_state
   - siebel_list_server_start_time
   - siebel_list_server_end_time
