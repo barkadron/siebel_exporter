@@ -53,8 +53,9 @@ type Exporter struct {
 	duration, error             prometheus.Gauge
 	totalScrapes                prometheus.Counter
 	// scrapeErrors         *prometheus.CounterVec
-	scrapeErrors    prometheus.Counter
-	gatewayServerUp prometheus.Gauge
+	scrapeErrors        prometheus.Counter
+	gatewayServerUp     prometheus.Gauge
+	applicationServerUp prometheus.Gauge
 }
 
 var (
@@ -124,6 +125,12 @@ func NewExporter(srvrmgr srvrmgr.SrvrMgr, defaultMetricsFile, customMetricsFile,
 			Help:      "Whether the Siebel Gateway Server is up (1 for up, 0 for down).",
 			// ConstLabels: labels,
 		}),
+		applicationServerUp: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "application_server_up",
+			Help:      "Whether the Siebel Application Server is up (1 for up, 0 for down).",
+			// ConstLabels: labels,
+		}),
 	}
 }
 
@@ -161,6 +168,7 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	ch <- e.error
 	e.scrapeErrors.Collect(ch)
 	ch <- e.gatewayServerUp
+	ch <- e.applicationServerUp
 }
 
 func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
@@ -178,6 +186,7 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 	}(time.Now())
 
 	e.gatewayServerUp.Set(0)
+	e.applicationServerUp.Set(0)
 
 	// Check srvrmgr connection status
 	switch e.srvrmgr.GetStatus() {
@@ -193,26 +202,37 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 			return
 		}
 	case srvrmgr.Connected:
-		log.Debugln("Ping Siebel Gateway Server...")
-		_, err := e.srvrmgr.ExecuteCommand("list ent param MaxThreads show PA_VALUE")
-		if err != nil {
-			log.Errorln("Error pinging Siebel Gateway Server: \n", err, "\n")
-			e.srvrmgr.Disconnect()
-			log.Warnln("Unable to scrape: srvrmgr was lost connection to the Siebel Gateway Server. Will try to reconnect on next scrape.")
-			return
-		}
-		log.Debugln("Successfully pinged Siebel Gateway Server.")
+		log.Debugln("srvrmgr connected to Siebel Gateway Server.")
 	default:
 		log.Errorln("Unable to scrape: unknown status of srvrmgr connection.")
 		return
 	}
 
+	log.Debugln("Ping Siebel Gateway Server...")
+	_, err = e.srvrmgr.ExecuteCommand("list ent param MaxThreads show PA_VALUE")
+	if err != nil {
+		log.Errorln("Error pinging Siebel Gateway Server: \n", err, "\n")
+		log.Warnln("Unable to scrape: srvrmgr was lost connection to the Siebel Gateway Server. Will try to reconnect on next scrape.")
+		e.srvrmgr.Disconnect()
+		return
+	}
+	log.Debugln("Successfully pinged Siebel Gateway Server.")
+
 	e.gatewayServerUp.Set(1)
 
-	if checkIfMetricsChanged(e.customMetricsFile) {
-		log.Infoln("Custom metrics changed, reload it.")
-		reloadMetrics(e.defaultMetricsFile, e.customMetricsFile)
+	log.Debugln("Ping Siebel Application Server...")
+	_, err = e.srvrmgr.ExecuteCommand("list comp show CC_ALIAS")
+	if err != nil {
+		log.Errorln("Error pinging Siebel Application Server: \n", err, "\n")
+		log.Warnln("Unable to scrape: srvrmgr was lost connection to the Siebel Application Server. Will try to reconnect on next scrape.")
+		e.srvrmgr.Disconnect()
+		return
 	}
+	log.Debugln("Successfully pinged Siebel Gateway Server.")
+
+	e.applicationServerUp.Set(1)
+
+	reloadMetricsIfItChanged(e.defaultMetricsFile, e.customMetricsFile)
 
 	for _, metric := range defaultMetrics.Metric {
 		log.Debugln("About to scrape metric: ")
@@ -517,6 +537,13 @@ func hashFile(h hash.Hash, fn string) error {
 		return err
 	}
 	return nil
+}
+
+func reloadMetricsIfItChanged(defaultMetricsFile, customMetricsFile string) {
+	if checkIfMetricsChanged(customMetricsFile) {
+		log.Infoln("Custom metrics changed, reload it...")
+		reloadMetrics(defaultMetricsFile, customMetricsFile)
+	}
 }
 
 func checkIfMetricsChanged(customMetricsFile string) bool {

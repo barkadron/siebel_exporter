@@ -164,7 +164,10 @@ func (sm *srvrMgr) GetStatus() SrvrmgrStatus {
 
 func (sm *srvrMgr) ExecuteCommand(cmd string) (string, error) {
 	cmd = strings.TrimSpace(cmd)
-	if strings.ToLower(cmd) == "exit" || strings.ToLower(cmd) == "quit" || strings.Contains(strings.ToLower(cmd), "set server") {
+	if strings.ToLower(cmd) == "exit" ||
+		strings.ToLower(cmd) == "quit" ||
+		strings.Contains(strings.ToLower(cmd), "set server") ||
+		strings.Contains(strings.ToLower(cmd), "unset server") {
 		return "", errors.New("Error! Command '" + cmd + "' not allowed.")
 	}
 	return sm.executeCommand(cmd)
@@ -196,9 +199,13 @@ func (sm *srvrMgr) connect() error {
 		return err
 	}
 
-	// @FIXME: what if GW is up, but all APPs are down?
-	// Connecting to Gateway:localhost\n\nConnected to 0 server(s) out of a total of 1 server(s) in the enterprise\n\nFailed to connect server app1: Handshake failed\nsrvrmgr:app1>
-	if !strings.Contains(connRes, "Connected to 1 server(s)") {
+	log.Infoln(connRes)
+
+	// If GW is up, but all APPs are down:
+	// 		"Connecting to Gateway:localhost\n\nConnected to 0 server(s) out of a total of 1 server(s) in the enterprise\n\nFailed to connect server app1: Handshake failed\nsrvrmgr:app1>"
+
+	// if !strings.Contains(connRes, "Connected to 1 server(s)") {
+	if !strings.Contains(connRes, "total of 1 server(s)") {
 		sm.status.Set(ConnectionError)
 		defer sm.disconnect()
 		err := fmt.Errorf("error! Connection established, but it looks like there are multiple servers. Did you forget to define '/s' argument in connection command?")
