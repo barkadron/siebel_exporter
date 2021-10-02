@@ -175,6 +175,9 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 	log.Debugln("Exporter.scrape")
 
 	e.totalScrapes.Inc()
+	e.gatewayServerUp.Set(0)
+	e.applicationServerUp.Set(0)
+
 	var err error
 	defer func(begun time.Time) {
 		e.duration.Set(time.Since(begun).Seconds())
@@ -185,100 +188,38 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		}
 	}(time.Now())
 
-	e.gatewayServerUp.Set(0)
-	e.applicationServerUp.Set(0)
-
-	// Check srvrmgr connection status
-	switch e.srvrmgr.GetStatus() {
-	case srvrmgr.Disconnecting:
-		log.Warnln("Unable to scrape: srvrmgr is in process of disconnection from Siebel Gateway Server.")
-		return
-	case srvrmgr.Connecting:
-		log.Warnln("Unable to scrape: srvrmgr is in process of connection to Siebel Gateway Server.")
-		return
-	case srvrmgr.Disconnected:
-		log.Warnln("Unable to scrape: srvrmgr not connected to Siebel Gateway Server. Trying to connect...")
-		if err = e.srvrmgr.Connect(); err != nil {
-			return
-		}
-	case srvrmgr.Connected:
-		log.Debugln("srvrmgr connected to Siebel Gateway Server.")
-	default:
-		log.Errorln("Unable to scrape: unknown status of srvrmgr connection.")
+	connected, connectionErr := checkConnection(&e.srvrmgr)
+	if connectionErr != nil || !connected {
 		return
 	}
 
-	log.Debugln("Ping Siebel Gateway Server...")
-	_, err = e.srvrmgr.ExecuteCommand("list ent param MaxThreads show PA_VALUE")
-	if err != nil {
-		log.Errorln("Error pinging Siebel Gateway Server: \n", err, "\n")
+	if err = pingGatewayServer(&e.srvrmgr); err != nil {
 		log.Warnln("Unable to scrape: srvrmgr was lost connection to the Siebel Gateway Server. Will try to reconnect on next scrape.")
-		e.srvrmgr.Disconnect()
 		return
 	}
-	log.Debugln("Successfully pinged Siebel Gateway Server.")
-
 	e.gatewayServerUp.Set(1)
 
-	log.Debugln("Ping Siebel Application Server...")
-	_, err = e.srvrmgr.ExecuteCommand("list comp show CC_ALIAS")
-	if err != nil {
-		log.Errorln("Error pinging Siebel Application Server: \n", err, "\n")
+	if err = pingApplicationServer(&e.srvrmgr); err != nil {
 		log.Warnln("Unable to scrape: srvrmgr was lost connection to the Siebel Application Server. Will try to reconnect on next scrape.")
-		e.srvrmgr.Disconnect()
 		return
 	}
-	log.Debugln("Successfully pinged Siebel Gateway Server.")
-
 	e.applicationServerUp.Set(1)
 
 	reloadMetricsIfItChanged(e.defaultMetricsFile, e.customMetricsFile)
 
 	for _, metric := range defaultMetrics.Metric {
-		log.Debugln("About to scrape metric: ")
-		log.Debugln("	- Metric Command: ", metric.Command)
-		log.Debugln("	- Metric Subsystem: ", metric.Subsystem)
-		log.Debugln("	- Metric Help: ", metric.Help)
-		log.Debugln("	- Metric HelpField: ", metric.HelpField)
-		log.Debugln("	- Metric Type: ", metric.Type)
-		log.Debugln("	- Metric Buckets: ", metric.Buckets, "(Ignored unless histogram type)")
-		log.Debugln("	- Metric ValueMap: ", metric.ValueMap)
-		log.Debugln("	- Metric Labels: ", metric.Labels)
-		log.Debugln("	- Metric FieldToAppend: ", metric.FieldToAppend)
-		log.Debugln("	- Metric IgnoreZeroResult: ", metric.IgnoreZeroResult)
-		log.Debugln("	- Metric Extended: ", metric.Extended)
+		logMetricDesc(metric)
 
-		if len(metric.Command) == 0 {
-			log.Errorln("Error scraping for '" + fmt.Sprintf("%+v", metric.Help) + "'. Did you forget to define 'command' in your toml file?")
+		if !validateMetricDesc(metric) {
 			return
-		}
-
-		if len(metric.Help) == 0 {
-			log.Errorln("Error scraping for command '" + metric.Command + "'. Did you forget to define 'help' in your toml file?")
-			return
-		}
-
-		for columnName, metricType := range metric.Type {
-			if strings.ToLower(metricType) == "histogram" {
-				if len(metric.Buckets) == 0 {
-					log.Errorln("Error scraping for command '" + metric.Command + "'. Did you forget to define 'buckets' in your toml file?")
-					return
-				}
-				_, exists := metric.Buckets[columnName]
-				if !exists {
-					log.Errorln("Error scraping for command '" + metric.Command + "'. Unable to find buckets configuration key for metric '" + columnName + "'.")
-					return
-				}
-			}
 		}
 
 		if metric.Extended && e.disableExtendedMetrics {
-			log.Debug("Skip extended metric.")
+			log.Debugln("Skip extended metric.")
 			continue
 		}
 
 		scrapeStart := time.Now()
-		// if err = scrapeMetric(e.namespace, e.dateFormat, e.disableEmptyMetricsOverride, e.srvrmgr, ch, metric); err != nil {
 		if err = scrapeGenericValues(e.namespace, e.dateFormat, e.disableEmptyMetricsOverride, e.srvrmgr, ch, metric); err != nil {
 			log.Errorln("Error scraping for '" + metric.Subsystem + "', '" + fmt.Sprintf("%+v", metric.Help) + "' :\n" + err.Error())
 			// e.scrapeErrors.WithLabelValues(metric.Subsystem).Inc()
@@ -290,9 +231,98 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 	}
 }
 
+func checkConnection(smgr *srvrmgr.SrvrMgr) (connected bool, err error) {
+	// Check srvrmgr connection status
+	switch (*smgr).GetStatus() {
+	case srvrmgr.Connected:
+		log.Debugln("srvrmgr connected to Siebel Gateway Server.")
+		return true, nil
+	case srvrmgr.Disconnected:
+		log.Warnln("Unable to scrape: srvrmgr not connected to Siebel Gateway Server. Trying to connect...")
+		if err = (*smgr).Connect(); err != nil {
+			return false, err
+		}
+		return true, nil
+	case srvrmgr.Disconnecting:
+		log.Warnln("Unable to scrape: srvrmgr is in process of disconnection from Siebel Gateway Server.")
+		return false, nil
+	case srvrmgr.Connecting:
+		log.Warnln("Unable to scrape: srvrmgr is in process of connection to Siebel Gateway Server.")
+		return false, nil
+	default:
+		log.Errorln("Unable to scrape: unknown status of srvrmgr connection.")
+		return false, nil
+	}
+}
+
+func pingGatewayServer(smgr *srvrmgr.SrvrMgr) error {
+	log.Debugln("Ping Siebel Gateway Server...")
+	if _, err := (*smgr).ExecuteCommand("list ent param MaxThreads show PA_VALUE"); err != nil {
+		log.Errorln("Error pinging Siebel Gateway Server: \n", err, "\n")
+		(*smgr).Disconnect()
+		return err
+	}
+	log.Debugln("Successfully pinged Siebel Gateway Server.")
+	return nil
+}
+
+func pingApplicationServer(smgr *srvrmgr.SrvrMgr) error {
+	log.Debugln("Ping Siebel Application Server...")
+	if _, err := (*smgr).ExecuteCommand("list comp show CC_ALIAS"); err != nil {
+		log.Errorln("Error pinging Siebel Application Server: \n", err, "\n")
+		(*smgr).Disconnect()
+		return err
+	}
+	log.Debugln("Successfully pinged Siebel Gateway Server.")
+	return nil
+}
+
+func logMetricDesc(metric Metric) {
+	// @FIXME:
+	log.Debugln("About to scrape metric: ")
+	log.Debugln("	- Metric Command: ", metric.Command)
+	log.Debugln("	- Metric Subsystem: ", metric.Subsystem)
+	log.Debugln("	- Metric Help: ", metric.Help)
+	log.Debugln("	- Metric HelpField: ", metric.HelpField)
+	log.Debugln("	- Metric Type: ", metric.Type)
+	log.Debugln("	- Metric Buckets: ", metric.Buckets, "(Ignored unless histogram type)")
+	log.Debugln("	- Metric ValueMap: ", metric.ValueMap)
+	log.Debugln("	- Metric Labels: ", metric.Labels)
+	log.Debugln("	- Metric FieldToAppend: ", metric.FieldToAppend)
+	log.Debugln("	- Metric IgnoreZeroResult: ", metric.IgnoreZeroResult)
+	log.Debugln("	- Metric Extended: ", metric.Extended)
+}
+
+func validateMetricDesc(metric Metric) bool {
+	if len(metric.Command) == 0 {
+		log.Errorln("Error scraping for '" + fmt.Sprintf("%+v", metric.Help) + "'. Did you forget to define 'command' in your toml file?")
+		return false
+	}
+
+	if len(metric.Help) == 0 {
+		log.Errorln("Error scraping for command '" + metric.Command + "'. Did you forget to define 'help' in your toml file?")
+		return false
+	}
+
+	for columnName, metricType := range metric.Type {
+		if strings.ToLower(metricType) == "histogram" {
+			if len(metric.Buckets) == 0 {
+				log.Errorln("Error scraping for command '" + metric.Command + "'. Did you forget to define 'buckets' in your toml file?")
+				return false
+			}
+			_, exists := metric.Buckets[columnName]
+			if !exists {
+				log.Errorln("Error scraping for command '" + metric.Command + "'. Unable to find buckets configuration key for metric '" + columnName + "'.")
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
 // generic method for retrieving metrics.
-func scrapeGenericValues(namespace string, dateFormat string, disableEmptyMetricsOverride bool, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric,
-	metric Metric) error {
+func scrapeGenericValues(namespace string, dateFormat string, disableEmptyMetricsOverride bool, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric, metric Metric) error {
 	metricsCount := 0
 	dataRowToPrometheusMetricConverter := func(row map[string]string) error {
 		log.Debugln("dataRowToPrometheusMetricConverter")
@@ -388,8 +418,9 @@ func scrapeGenericValues(namespace string, dateFormat string, disableEmptyMetric
 		return nil
 	}
 
-	err := generatePrometheusMetrics(srvrmgr, dataRowToPrometheusMetricConverter, metric.Command, dateFormat, disableEmptyMetricsOverride)
 	log.Debugln("ScrapeGenericValues | metricsCount: " + fmt.Sprint(metricsCount))
+
+	err := generatePrometheusMetrics(srvrmgr, dataRowToPrometheusMetricConverter, metric.Command, dateFormat, disableEmptyMetricsOverride)
 	if err != nil {
 		return err
 	}
