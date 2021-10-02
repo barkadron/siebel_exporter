@@ -188,19 +188,16 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		}
 	}(time.Now())
 
-	connected, connectionErr := checkConnection(&e.srvrmgr)
-	if connectionErr != nil || !connected {
+	if !checkConnection(&e.srvrmgr) {
 		return
 	}
 
 	if err = pingGatewayServer(&e.srvrmgr); err != nil {
-		log.Warnln("Unable to scrape: srvrmgr was lost connection to the Siebel Gateway Server. Will try to reconnect on next scrape.")
 		return
 	}
 	e.gatewayServerUp.Set(1)
 
 	if err = pingApplicationServer(&e.srvrmgr); err != nil {
-		log.Warnln("Unable to scrape: srvrmgr was lost connection to the Siebel Application Server. Will try to reconnect on next scrape.")
 		return
 	}
 	e.applicationServerUp.Set(1)
@@ -220,7 +217,7 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		}
 
 		scrapeStart := time.Now()
-		if err = scrapeGenericValues(e.namespace, e.dateFormat, e.disableEmptyMetricsOverride, e.srvrmgr, ch, metric); err != nil {
+		if err = scrapeGenericValues(e.namespace, e.dateFormat, e.disableEmptyMetricsOverride, &e.srvrmgr, &ch, metric); err != nil {
 			log.Errorln("Error scraping for '" + metric.Subsystem + "', '" + fmt.Sprintf("%+v", metric.Help) + "' :\n" + err.Error())
 			// e.scrapeErrors.WithLabelValues(metric.Subsystem).Inc()
 			e.scrapeErrors.Inc()
@@ -231,27 +228,27 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 	}
 }
 
-func checkConnection(smgr *srvrmgr.SrvrMgr) (connected bool, err error) {
-	// Check srvrmgr connection status
+// Check srvrmgr connection status
+func checkConnection(smgr *srvrmgr.SrvrMgr) bool {
 	switch (*smgr).GetStatus() {
 	case srvrmgr.Connected:
 		log.Debugln("srvrmgr connected to Siebel Gateway Server.")
-		return true, nil
+		return true
 	case srvrmgr.Disconnected:
 		log.Warnln("Unable to scrape: srvrmgr not connected to Siebel Gateway Server. Trying to connect...")
-		if err = (*smgr).Connect(); err != nil {
-			return false, err
+		if err := (*smgr).Connect(); err != nil {
+			return false
 		}
-		return true, nil
+		return true
 	case srvrmgr.Disconnecting:
 		log.Warnln("Unable to scrape: srvrmgr is in process of disconnection from Siebel Gateway Server.")
-		return false, nil
+		return false
 	case srvrmgr.Connecting:
 		log.Warnln("Unable to scrape: srvrmgr is in process of connection to Siebel Gateway Server.")
-		return false, nil
+		return false
 	default:
 		log.Errorln("Unable to scrape: unknown status of srvrmgr connection.")
-		return false, nil
+		return false
 	}
 }
 
@@ -259,6 +256,7 @@ func pingGatewayServer(smgr *srvrmgr.SrvrMgr) error {
 	log.Debugln("Ping Siebel Gateway Server...")
 	if _, err := (*smgr).ExecuteCommand("list ent param MaxThreads show PA_VALUE"); err != nil {
 		log.Errorln("Error pinging Siebel Gateway Server: \n", err, "\n")
+		log.Warnln("Unable to scrape: srvrmgr was lost connection to the Siebel Gateway Server. Will try to reconnect on next scrape.")
 		(*smgr).Disconnect()
 		return err
 	}
@@ -270,6 +268,7 @@ func pingApplicationServer(smgr *srvrmgr.SrvrMgr) error {
 	log.Debugln("Ping Siebel Application Server...")
 	if _, err := (*smgr).ExecuteCommand("list comp show CC_ALIAS"); err != nil {
 		log.Errorln("Error pinging Siebel Application Server: \n", err, "\n")
+		log.Warnln("Unable to scrape: srvrmgr was lost connection to the Siebel Application Server. Will try to reconnect on next scrape.")
 		(*smgr).Disconnect()
 		return err
 	}
@@ -322,7 +321,98 @@ func validateMetricDesc(metric Metric) bool {
 }
 
 // generic method for retrieving metrics.
-func scrapeGenericValues(namespace string, dateFormat string, disableEmptyMetricsOverride bool, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric, metric Metric) error {
+func scrapeGenericValues(namespace string, dateFormat string, disableEmptyMetricsOverride bool, smgr *srvrmgr.SrvrMgr, ch *chan<- prometheus.Metric, metric Metric) error {
+	log.Debugln("scrapeGenericValues")
+
+	siebelData, err := getSiebelData(smgr, metric.Command, dateFormat, disableEmptyMetricsOverride)
+	if err != nil {
+		return err
+	}
+
+	metricsCount, err := generatePrometheusMetrics(siebelData, namespace, ch, metric)
+	log.Debugln("metricsCount: '" + fmt.Sprint(metricsCount) + "'.")
+	if err != nil {
+		return err
+	}
+
+	if metricsCount == 0 && !metric.IgnoreZeroResult {
+		return errors.New("ERROR! No metrics found while parsing. Metrics Count: '" + fmt.Sprint(metricsCount) + "'.")
+	}
+
+	return err
+}
+
+func getSiebelData(smgr *srvrmgr.SrvrMgr, command string, dateFormat string, disableEmptyMetricsOverride bool) ([]map[string]string, error) {
+	siebelData := []map[string]string{}
+
+	commandResult, err := (*smgr).ExecuteCommand(command)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check and parse srvrmgr output...
+	lines := strings.Split(commandResult, "\n")
+	if len(lines) < 3 {
+		return nil, errors.New("ERROR! Command output is not valid: '" + commandResult + "'.")
+	}
+
+	columnsRow := lines[0]
+	separatorsRow := lines[1]
+	rawDataRows := lines[2:]
+
+	// Get column names
+	columnsNames := strings.Split(trimHeadRow(columnsRow), " ")
+
+	// Get column max lengths (calc from separator length)
+	spacerLength := getSpacerLength(separatorsRow)
+	separators := strings.Split(trimHeadRow(separatorsRow), " ")
+	lengths := make([]int, len(separators))
+	for i, s := range separators {
+		lengths[i] = len(s) + spacerLength
+	}
+
+	// Parse data-rows
+	log.Debugln("Parsing rows with data...")
+	for _, rawRow := range rawDataRows {
+		log.Debugln("	- raw row: '" + rawRow + "'.")
+
+		parsedRow := make(map[string]string)
+		rowLen := len(rawRow)
+		for colIndex, colName := range columnsNames {
+			colMaxLen := lengths[colIndex]
+			if colMaxLen > rowLen {
+				colMaxLen = rowLen
+			}
+			colValue := strings.TrimSpace(rawRow[:colMaxLen])
+
+			// If value is empty then set it to default "0"
+			if len(colValue) == 0 && !disableEmptyMetricsOverride {
+				colValue = "0"
+			}
+
+			// Try to convert date-string to Unix timestamp
+			if len(colValue) == len(dateFormat) {
+				colValue = convertDateStringToTimestamp(colValue, dateFormat)
+			}
+
+			// dataMap[strings.ToLower(colName)] = colValue
+			parsedRow[colName] = colValue
+
+			// Cut off used value from row
+			rawRow = rawRow[colMaxLen:]
+			rowLen = len(rawRow)
+		}
+
+		siebelData = append(siebelData, parsedRow)
+	}
+
+	return siebelData, nil
+}
+
+// Parse srvrmgr result and call parsing function to each row
+func generatePrometheusMetrics(data []map[string]string, namespace string, ch *chan<- prometheus.Metric, metric Metric) (int, error) {
+	log.Debugln("generatePrometheusMetrics")
+
 	metricsCount := 0
 	dataRowToPrometheusMetricConverter := func(row map[string]string) error {
 		log.Debugln("dataRowToPrometheusMetricConverter")
@@ -389,7 +479,7 @@ func scrapeGenericValues(namespace string, dateFormat string, disableEmptyMetric
 
 			if metricType == prometheus.GaugeValue || metricType == prometheus.CounterValue {
 				log.Debugln("	- Converting result looks like: [" + metricNameCleaned + "] : '" + fmt.Sprintf("%g", metricValueParsed) + "'.")
-				ch <- prometheus.MustNewConstMetric(promMetricDesc, metricType, metricValueParsed, labelsValues...)
+				*ch <- prometheus.MustNewConstMetric(promMetricDesc, metricType, metricValueParsed, labelsValues...)
 			} else {
 				count, err := strconv.ParseUint(strings.TrimSpace(row["count"]), 10, 64)
 				if err != nil {
@@ -411,95 +501,21 @@ func scrapeGenericValues(namespace string, dateFormat string, disableEmptyMetric
 					buckets[lelimit] = counter
 				}
 				log.Debugln("	- Converting result looks like: [" + metricNameCleaned + "] : '" + fmt.Sprintf("%g", metricValueParsed) + "', count: '" + fmt.Sprint(count) + ", buckets: '" + fmt.Sprintf("%+v", buckets) + "'.")
-				ch <- prometheus.MustNewConstHistogram(promMetricDesc, count, metricValueParsed, buckets, labelsValues...)
+				*ch <- prometheus.MustNewConstHistogram(promMetricDesc, count, metricValueParsed, buckets, labelsValues...)
 			}
 			metricsCount++
 		}
 		return nil
 	}
 
-	log.Debugln("ScrapeGenericValues | metricsCount: " + fmt.Sprint(metricsCount))
-
-	err := generatePrometheusMetrics(srvrmgr, dataRowToPrometheusMetricConverter, metric.Command, dateFormat, disableEmptyMetricsOverride)
-	if err != nil {
-		return err
-	}
-	if !metric.IgnoreZeroResult && metricsCount == 0 {
-		return errors.New("ERROR! No metrics found while parsing. Metrics Count: '" + fmt.Sprint(metricsCount) + "'.")
-	}
-
-	return err
-}
-
-// Parse srvrmgr result and call parsing function to each row
-func generatePrometheusMetrics(srvrmgr srvrmgr.SrvrMgr, dataRowToPrometheusMetricConverter func(row map[string]string) error, command string, dateFormat string, disableEmptyMetricsOverride bool) error {
-	log.Debugln("generatePrometheusMetrics")
-
-	commandResult, err := srvrmgr.ExecuteCommand(command)
-	if err != nil {
-		return err
-	}
-
-	// Check and parse srvrmgr output...
-	lines := strings.Split(commandResult, "\n")
-	if len(lines) < 3 {
-		return errors.New("ERROR! Command output is not valid: '" + commandResult + "'.")
-	}
-
-	columnsRow := lines[0]
-	separatorsRow := lines[1]
-	rawDataRows := lines[2:]
-
-	// Get column names
-	columnsNames := strings.Split(trimHeadRow(columnsRow), " ")
-
-	// Get column max lengths (calc from separator length)
-	spacerLength := getSpacerLength(separatorsRow)
-	separators := strings.Split(trimHeadRow(separatorsRow), " ")
-	lengths := make([]int, len(separators))
-	for i, s := range separators {
-		lengths[i] = len(s) + spacerLength
-	}
-
-	// Parse data-rows
-	log.Debugln("Parsing rows with data...")
-	for _, rawRow := range rawDataRows {
-		log.Debugln("	- raw row: '" + rawRow + "'.")
-
-		parsedRow := make(map[string]string)
-		rowLen := len(rawRow)
-		for colIndex, colName := range columnsNames {
-			colMaxLen := lengths[colIndex]
-			if colMaxLen > rowLen {
-				colMaxLen = rowLen
-			}
-			colValue := strings.TrimSpace(rawRow[:colMaxLen])
-
-			// If value is empty then set it to default "0"
-			if len(colValue) == 0 && !disableEmptyMetricsOverride {
-				colValue = "0"
-			}
-
-			// Try to convert date-string to Unix timestamp
-			if len(colValue) == len(dateFormat) {
-				colValue = convertDateStringToTimestamp(colValue, dateFormat)
-			}
-
-			// dataMap[strings.ToLower(colName)] = colValue
-			parsedRow[colName] = colValue
-
-			// Cut off used value from row
-			rawRow = rawRow[colMaxLen:]
-			rowLen = len(rawRow)
-		}
-
+	for _, row := range data {
 		// Convert parsed row to Prometheus Metric
-		if err := dataRowToPrometheusMetricConverter(parsedRow); err != nil {
-			return err
+		if err := dataRowToPrometheusMetricConverter(row); err != nil {
+			return metricsCount, err
 		}
 	}
 
-	return nil
+	return metricsCount, nil
 }
 
 func getMetricType(metricName string, metricsTypes map[string]string) prometheus.ValueType {
