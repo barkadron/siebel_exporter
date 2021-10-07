@@ -5,14 +5,14 @@ Subsystem = "list_server"
 SBLSRVR_STATE = "State of the Siebel Application Server."
 START_TIME = "Time the Siebel Application Server was started."
 END_TIME = "Time the Siebel Application Server was stopped."
-[Metric.ValueMap.SBLSRVR_STATE] # Sort according to doc - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor2.html#wp1034139
+[Metric.ValueMap.SBLSRVR_STATE] # Sort according to documentation - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor2.html#wp1034139
 "Starting Up" = "1"
 "Running" = "2"
 "Shutting Down" = "3"
 "Shutdown" = "4"
 "Not Online" = "5"
 "Partially Offline" = "6"
-"Not available" = "7"
+"Not Available" = "7"
 "Connect Failed" = "8"
 "Handshake Failed" = "9"
 "Login Failed" = "10"
@@ -25,14 +25,15 @@ Labels = [ "CG_NAME" ]
 [Metric.Help]
 CA_RUN_STATE = "State of the Component Group."
 CG_NUM_COMPONENTS = "Number of components in the Component Group."
-[Metric.ValueMap.CA_RUN_STATE] # Sort according to doc - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor3.html#wp1047134
+[Metric.ValueMap.CA_RUN_STATE] # Sort according to documentation - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor3.html#wp1047134
 "Online" = "1"
 "Running" = "2"
 "Shutdown" = "3"
-"Part shutdown" = "4"
+"Part Shutdown" = "4"
 "Offline" = "5"
-"Part offline" = "6"
-"Starting up" = "7"
+"Part Offline" = "6"
+"Starting Up" = "7"
+"Shutting Down" = "8" # Actual status which is not in the documentation
 
 [[Metric]]
 Command = "list comp show CC_ALIAS, CP_DISP_RUN_STATE, CP_NUM_RUN_TASKS, CP_MAX_TASKS, CP_ACTV_MTS_PROCS, CP_MAX_MTS_PROCS, CP_START_TIME, CP_END_TIME"
@@ -46,7 +47,7 @@ CP_ACTV_MTS_PROCS = "Current number of running multi-threaded shell (MTS) proces
 CP_MAX_MTS_PROCS = "Maximum number of running multi-threaded shell (MTS) processes for the Component."
 CP_START_TIME = "Time the Component was started."
 CP_END_TIME = "Time the Component was ended."
-[Metric.ValueMap.CP_DISP_RUN_STATE] # Sort according to doc - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor4.html#wp1036510
+[Metric.ValueMap.CP_DISP_RUN_STATE] # Sort according to documentation - https://docs.oracle.com/cd/E74890_01/books/SysDiag/SysDiagSysMonitor4.html#wp1036510
 "Starting Up" = "1"
 "Online" = "2"
 "Running" = "3"

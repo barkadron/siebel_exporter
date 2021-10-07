@@ -1,7 +1,9 @@
 # Siebel Exporter
 
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/barkadron/siebel_exporter)
+![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/barkadron/siebel_exporter.svg)
 [![GoDoc](https://godoc.org/github.com/barkadron/siebel_exporter?status.svg)](http://godoc.org/github.com/barkadron/siebel_exporter)
-[![Report card](https://goreportcard.com/badge/github.com/barkadron/siebel_exporter)](https://goreportcard.com/badge/github.com/barkadron/siebel_exporter)
+[![Go Report Card](https://goreportcard.com/badge/github.com/barkadron/siebel_exporter)](https://goreportcard.com/report/github.com/barkadron/siebel_exporter)
 
 ## Description
 
@@ -124,6 +126,7 @@ The following metrics are exposed currently:
   - siebel_exporter_scrape_errors_total
   - siebel_exporter_scrapes_total
   - siebel_gateway_server_up
+  - siebel_application_server_up
   - siebel_list_server_sblsrvr_state
   - siebel_list_server_start_time
   - siebel_list_server_end_time

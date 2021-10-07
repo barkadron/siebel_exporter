@@ -11,38 +11,56 @@ import (
 	"github.com/prometheus/common/log"
 )
 
-// status is an enumeration of shell statuses that represent a simple value.
-type status int
+// ShellStatus is an enumeration of shell statuses that represent a simple value.
+type ShellStatus int
 
-// possible values for the 'status' enum.
+// Possible values for the ShellStatus enum.
 const (
-	_ status = iota
-	waitingForCommand
-	commandExecution
-	termination
-	terminated
+	_ ShellStatus = iota
+	WaitingForCommand
+	CommandExecution
+	Termination
+	Terminated
 )
+
+// String return string representation on ShellStatus value.
+func (s ShellStatus) String() string {
+	switch s {
+	case WaitingForCommand:
+		return "WaitingForCommand"
+	case CommandExecution:
+		return "CommandExecution"
+	case Termination:
+		return "Termination"
+	case Terminated:
+		return "Terminated"
+	default:
+		return "Unknown"
+	}
+}
 
 type safeStatus struct {
 	sync.RWMutex
-	value status
+	value ShellStatus
 }
 
-func (ss *safeStatus) Get() status {
+func (ss *safeStatus) Get() ShellStatus {
 	ss.RLock()
 	defer ss.RUnlock()
 
 	return ss.value
 }
 
-func (ss *safeStatus) Set(value status) error {
+func (ss *safeStatus) Set(value ShellStatus) error {
 	ss.Lock()
 	defer ss.Unlock()
 
-	if ss.value == terminated {
+	log.Debugf("Set shell status from '%v' to '%v'.", ss.value.String(), value.String())
+
+	if ss.value == Terminated {
 		return errors.New("this status transition not allowed")
 	}
-	if ss.value == termination && value != terminated {
+	if ss.value == Termination && value != Terminated {
 		return errors.New("this status transition not allowed")
 	}
 	ss.value = value
@@ -77,10 +95,11 @@ type shell struct {
 	terminateMu  sync.Mutex
 }
 
-// Shell is a public interface for the shell struct (https://stackoverflow.com/a/53034166).
-type Shell interface {
+// Shell is a public interface for the shell struct.
+type Shell interface { // https://stackoverflow.com/a/53034166
 	ExecuteCommand(cmd string) (string, error)
 	Terminate()
+	GetStatus() ShellStatus
 }
 
 // NewShell returns a new shell struct.
@@ -131,7 +150,7 @@ func NewShell(readBufferSize int) Shell {
 
 	readyToReadWG.Wait()
 
-	if err := s.status.Set(waitingForCommand); err != nil {
+	if err := s.status.Set(WaitingForCommand); err != nil {
 		panic(err)
 	}
 
@@ -152,6 +171,10 @@ func (s *shell) Terminate() {
 	s.terminate()
 }
 
+func (s *shell) GetStatus() ShellStatus {
+	return s.status.Get()
+}
+
 func (s *shell) executeCommand(cmd string) (string, error) {
 	log.Debugln("shell.executeCommand")
 
@@ -159,24 +182,24 @@ func (s *shell) executeCommand(cmd string) (string, error) {
 	defer s.execCmdMu.Unlock()
 
 	status := s.status.Get()
-	if status == terminated {
+	if status == Terminated {
 		return "", errors.New("Error! Execution of command '" + cmd + "' not allowed because shell terminated.")
 	}
 
-	if status == termination {
+	if status == Termination {
 		if strings.ToLower(cmd) != "exit" {
 			return "", errors.New("Error! Execution of command '" + cmd + "' not allowed while shell is in process of termination.")
 		}
-		if err := s.status.Set(terminated); err != nil {
+		if err := s.status.Set(Terminated); err != nil {
 			log.Errorln(err)
 			return "", err
 		}
 	} else {
-		if err := s.status.Set(commandExecution); err != nil {
+		if err := s.status.Set(CommandExecution); err != nil {
 			log.Errorln(err)
 			return "", err
 		}
-		defer s.status.Set(waitingForCommand)
+		defer s.status.Set(WaitingForCommand)
 	}
 
 	if !s.stdOutReader.ready {
@@ -242,11 +265,11 @@ func (s *shell) terminate() {
 	defer s.terminateMu.Unlock()
 
 	status := s.status.Get()
-	if status == termination || status == terminated {
+	if status == Termination || status == Terminated {
 		return
 	}
 
-	if err := s.status.Set(termination); err != nil {
+	if err := s.status.Set(Termination); err != nil {
 		log.Errorln(err)
 	}
 

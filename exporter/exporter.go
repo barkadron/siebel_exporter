@@ -53,8 +53,9 @@ type Exporter struct {
 	duration, error             prometheus.Gauge
 	totalScrapes                prometheus.Counter
 	// scrapeErrors         *prometheus.CounterVec
-	scrapeErrors    prometheus.Counter
-	gatewayServerUp prometheus.Gauge
+	scrapeErrors        prometheus.Counter
+	gatewayServerUp     prometheus.Gauge
+	applicationServerUp prometheus.Gauge
 }
 
 var (
@@ -124,6 +125,12 @@ func NewExporter(srvrmgr srvrmgr.SrvrMgr, defaultMetricsFile, customMetricsFile,
 			Help:      "Whether the Siebel Gateway Server is up (1 for up, 0 for down).",
 			// ConstLabels: labels,
 		}),
+		applicationServerUp: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "application_server_up",
+			Help:      "Whether the Siebel Application Server is up (1 for up, 0 for down).",
+			// ConstLabels: labels,
+		}),
 	}
 }
 
@@ -161,12 +168,16 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	ch <- e.error
 	e.scrapeErrors.Collect(ch)
 	ch <- e.gatewayServerUp
+	ch <- e.applicationServerUp
 }
 
 func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 	log.Debugln("Exporter.scrape")
 
 	e.totalScrapes.Inc()
+	e.gatewayServerUp.Set(0)
+	e.applicationServerUp.Set(0)
+
 	var err error
 	defer func(begun time.Time) {
 		e.duration.Set(time.Since(begun).Seconds())
@@ -177,88 +188,36 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		}
 	}(time.Now())
 
-	e.gatewayServerUp.Set(0)
-
-	// Check srvrmgr connection status
-	switch e.srvrmgr.GetStatus() {
-	case srvrmgr.Disconnecting:
-		log.Warnln("Unable to scrape: srvrmgr is in process of disconnection from Siebel Gateway Server.")
-		return
-	case srvrmgr.Connecting:
-		log.Warnln("Unable to scrape: srvrmgr is in process of connection to Siebel Gateway Server.")
-		return
-	case srvrmgr.Disconnected:
-		log.Warnln("Unable to scrape: srvrmgr not connected to Siebel Gateway Server. Trying to connect...")
-		if err = e.srvrmgr.Connect(); err != nil {
-			return
-		}
-	case srvrmgr.Connected:
-		log.Debugln("Ping Siebel Gateway Server...")
-		_, err := e.srvrmgr.ExecuteCommand("list ent param MaxThreads show PA_VALUE")
-		if err != nil {
-			log.Errorln("Error pinging Siebel Gateway Server: \n", err, "\n")
-			e.srvrmgr.Disconnect()
-			log.Warnln("Unable to scrape: srvrmgr was lost connection to the Siebel Gateway Server. Will try to reconnect on next scrape.")
-			return
-		}
-		log.Debugln("Successfully pinged Siebel Gateway Server.")
-	default:
-		log.Errorln("Unable to scrape: unknown status of srvrmgr connection.")
+	if !checkConnection(&e.srvrmgr) {
 		return
 	}
 
+	if err = pingGatewayServer(&e.srvrmgr); err != nil {
+		return
+	}
 	e.gatewayServerUp.Set(1)
 
-	if checkIfMetricsChanged(e.customMetricsFile) {
-		log.Infoln("Custom metrics changed, reload it.")
-		reloadMetrics(e.defaultMetricsFile, e.customMetricsFile)
+	if err = pingApplicationServer(&e.srvrmgr); err != nil {
+		return
 	}
+	e.applicationServerUp.Set(1)
+
+	reloadMetricsIfItChanged(e.defaultMetricsFile, e.customMetricsFile)
 
 	for _, metric := range defaultMetrics.Metric {
-		log.Debugln("About to scrape metric: ")
-		log.Debugln("	- Metric Command: ", metric.Command)
-		log.Debugln("	- Metric Subsystem: ", metric.Subsystem)
-		log.Debugln("	- Metric Help: ", metric.Help)
-		log.Debugln("	- Metric HelpField: ", metric.HelpField)
-		log.Debugln("	- Metric Type: ", metric.Type)
-		log.Debugln("	- Metric Buckets: ", metric.Buckets, "(Ignored unless histogram type)")
-		log.Debugln("	- Metric ValueMap: ", metric.ValueMap)
-		log.Debugln("	- Metric Labels: ", metric.Labels)
-		log.Debugln("	- Metric FieldToAppend: ", metric.FieldToAppend)
-		log.Debugln("	- Metric IgnoreZeroResult: ", metric.IgnoreZeroResult)
-		log.Debugln("	- Metric Extended: ", metric.Extended)
+		logMetricDesc(metric)
 
-		if len(metric.Command) == 0 {
-			log.Errorln("Error scraping for '" + fmt.Sprintf("%+v", metric.Help) + "'. Did you forget to define 'command' in your toml file?")
+		if !validateMetricDesc(metric) {
 			return
-		}
-
-		if len(metric.Help) == 0 {
-			log.Errorln("Error scraping for command '" + metric.Command + "'. Did you forget to define 'help' in your toml file?")
-			return
-		}
-
-		for columnName, metricType := range metric.Type {
-			if strings.ToLower(metricType) == "histogram" {
-				if len(metric.Buckets) == 0 {
-					log.Errorln("Error scraping for command '" + metric.Command + "'. Did you forget to define 'buckets' in your toml file?")
-					return
-				}
-				_, exists := metric.Buckets[columnName]
-				if !exists {
-					log.Errorln("Error scraping for command '" + metric.Command + "'. Unable to find buckets configuration key for metric '" + columnName + "'.")
-					return
-				}
-			}
 		}
 
 		if metric.Extended && e.disableExtendedMetrics {
-			log.Debug("Skip extended metric.")
+			log.Debugln("Skip extended metric.")
 			continue
 		}
 
 		scrapeStart := time.Now()
-		if err = scrapeMetric(e.namespace, e.dateFormat, e.disableEmptyMetricsOverride, e.srvrmgr, ch, metric); err != nil {
+		if err = scrapeGenericValues(e.namespace, e.dateFormat, e.disableEmptyMetricsOverride, &e.srvrmgr, &ch, metric); err != nil {
 			log.Errorln("Error scraping for '" + metric.Subsystem + "', '" + fmt.Sprintf("%+v", metric.Help) + "' :\n" + err.Error())
 			// e.scrapeErrors.WithLabelValues(metric.Subsystem).Inc()
 			e.scrapeErrors.Inc()
@@ -269,133 +228,132 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 	}
 }
 
-// interface method to call ScrapeGenericValues using Metric struct values
-func scrapeMetric(namespace string, dateFormat string, disableEmptyMetricsOverride bool, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric, metricDefinition Metric) error {
-	return scrapeGenericValues(namespace, dateFormat, disableEmptyMetricsOverride, srvrmgr, ch,
-		metricDefinition.Subsystem, metricDefinition.Labels, metricDefinition.Help, metricDefinition.HelpField, metricDefinition.Type,
-		metricDefinition.Buckets, metricDefinition.FieldToAppend, metricDefinition.IgnoreZeroResult, metricDefinition.ValueMap, metricDefinition.Command)
+// Check srvrmgr connection status
+func checkConnection(smgr *srvrmgr.SrvrMgr) bool {
+	switch (*smgr).GetStatus() {
+	case srvrmgr.Connected:
+		log.Debugln("srvrmgr connected to Siebel Gateway Server.")
+		return true
+	case srvrmgr.Disconnected:
+		log.Warnln("Unable to scrape: srvrmgr not connected to Siebel Gateway Server. Trying to connect...")
+		if err := (*smgr).Connect(); err != nil {
+			return false
+		}
+		return true
+	case srvrmgr.Disconnecting:
+		log.Warnln("Unable to scrape: srvrmgr is in process of disconnection from Siebel Gateway Server.")
+		return false
+	case srvrmgr.Connecting:
+		log.Warnln("Unable to scrape: srvrmgr is in process of connection to Siebel Gateway Server.")
+		return false
+	default:
+		log.Errorln("Unable to scrape: unknown status of srvrmgr connection.")
+		return false
+	}
+}
+
+func pingGatewayServer(smgr *srvrmgr.SrvrMgr) error {
+	log.Debugln("Ping Siebel Gateway Server...")
+	if _, err := (*smgr).ExecuteCommand("list ent param MaxThreads show PA_VALUE"); err != nil {
+		log.Errorln("Error pinging Siebel Gateway Server: \n", err, "\n")
+		log.Warnln("Unable to scrape: srvrmgr was lost connection to the Siebel Gateway Server. Will try to reconnect on next scrape.")
+		(*smgr).Disconnect()
+		return err
+	}
+	log.Debugln("Successfully pinged Siebel Gateway Server.")
+	return nil
+}
+
+func pingApplicationServer(smgr *srvrmgr.SrvrMgr) error {
+	log.Debugln("Ping Siebel Application Server...")
+	if _, err := (*smgr).ExecuteCommand("list state values show STATEVAL_NAME"); err != nil {
+		log.Errorln("Error pinging Siebel Application Server: \n", err, "\n")
+		log.Warnln("Unable to scrape: srvrmgr was lost connection to the Siebel Application Server. Will try to reconnect on next scrape.")
+		(*smgr).Disconnect()
+		return err
+	}
+	log.Debugln("Successfully pinged Siebel Application Server.")
+	return nil
+}
+
+func logMetricDesc(metric Metric) {
+	// @FIXME:
+	log.Debugln("About to scrape metric: ")
+	log.Debugln("	- Metric Command: ", metric.Command)
+	log.Debugln("	- Metric Subsystem: ", metric.Subsystem)
+	log.Debugln("	- Metric Help: ", metric.Help)
+	log.Debugln("	- Metric HelpField: ", metric.HelpField)
+	log.Debugln("	- Metric Type: ", metric.Type)
+	log.Debugln("	- Metric Buckets: ", metric.Buckets, "(Ignored unless histogram type)")
+	log.Debugln("	- Metric ValueMap: ", metric.ValueMap)
+	log.Debugln("	- Metric Labels: ", metric.Labels)
+	log.Debugln("	- Metric FieldToAppend: ", metric.FieldToAppend)
+	log.Debugln("	- Metric IgnoreZeroResult: ", metric.IgnoreZeroResult)
+	log.Debugln("	- Metric Extended: ", metric.Extended)
+}
+
+func validateMetricDesc(metric Metric) bool {
+	if len(metric.Command) == 0 {
+		log.Errorln("Error scraping for '" + fmt.Sprintf("%+v", metric.Help) + "'. Did you forget to define 'command' in your toml file?")
+		return false
+	}
+
+	if len(metric.Help) == 0 {
+		log.Errorln("Error scraping for command '" + metric.Command + "'. Did you forget to define 'help' in your toml file?")
+		return false
+	}
+
+	for columnName, metricType := range metric.Type {
+		if strings.ToLower(metricType) == "histogram" {
+			if len(metric.Buckets) == 0 {
+				log.Errorln("Error scraping for command '" + metric.Command + "'. Did you forget to define 'buckets' in your toml file?")
+				return false
+			}
+			_, exists := metric.Buckets[columnName]
+			if !exists {
+				log.Errorln("Error scraping for command '" + metric.Command + "'. Unable to find buckets configuration key for metric '" + columnName + "'.")
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 // generic method for retrieving metrics.
-func scrapeGenericValues(namespace string, dateFormat string, disableEmptyMetricsOverride bool, srvrmgr srvrmgr.SrvrMgr, ch chan<- prometheus.Metric,
-	metricSubsystem string, labels []string, metricsHelp map[string]string, metricsHelpField map[string]string, metricsTypes map[string]string,
-	metricsBuckets map[string]map[string]string, fieldToAppend string, ignoreZeroResult bool, valueMap map[string]map[string]string, command string) error {
-	metricsCount := 0
-	dataRowToPrometheusMetricConverter := func(row map[string]string) error {
-		log.Debugln("dataRowToPrometheusMetricConverter")
-		log.Debugln("	- row map : '" + fmt.Sprintf("%+v", row) + "'")
+func scrapeGenericValues(namespace string, dateFormat string, disableEmptyMetricsOverride bool, smgr *srvrmgr.SrvrMgr, ch *chan<- prometheus.Metric, metric Metric) error {
+	log.Debugln("scrapeGenericValues")
 
-		// Construct labels name and value
-		labelsNamesCleaned := []string{}
-		labelsValues := []string{}
-		// if strings.Compare(fieldToAppend, "") == 0 {
-		for _, label := range labels {
-			labelsNamesCleaned = append(labelsNamesCleaned, cleanName(label))
-			labelsValues = append(labelsValues, row[label])
-		}
-		// }
-		// Construct Prometheus values to sent back
-		for metricName, metricHelp := range metricsHelp {
-			metricType := getMetricType(metricName, metricsTypes)
-			metricNameCleaned := cleanName(metricName)
-			if strings.Compare(fieldToAppend, "") != 0 {
-				metricNameCleaned = cleanName(row[fieldToAppend])
-			}
-			// Dinamic help
-			if dinHelpName, exists1 := metricsHelpField[metricName]; exists1 {
-				if dinHelpValue, exists2 := row[dinHelpName]; exists2 {
-					log.Debugln("	- [DinamicHelp]: Help value '" + metricHelp + "' append with dinamic value '" + dinHelpValue + "'.")
-					metricHelp = metricHelp + " " + dinHelpValue
-				}
-			}
-			metricValue := row[metricName]
-			// Value mapping
-			if metricMap, exists1 := valueMap[metricName]; exists1 {
-				if len(metricMap) > 0 {
-					if mappedValue, exists2 := metricMap[metricValue]; exists2 {
-						log.Debugln("	- [ValueMap]: Value '" + metricValue + "' converted to '" + mappedValue + "'.")
-						metricValue = mappedValue
-					}
-					// Add mapping to help
-					mappingHelp := " Value mapping: "
-					mapStrings := []string{}
-					for src, dst := range metricMap {
-						mapStrings = append(mapStrings, dst+" - '"+src+"', ")
-					}
-					sort.Strings(mapStrings)
-					for _, mapStr := range mapStrings {
-						mappingHelp = mappingHelp + mapStr
-					}
-					mappingHelp = strings.TrimRight(mappingHelp, ", ")
-					mappingHelp = mappingHelp + "."
-					metricHelp = metricHelp + mappingHelp
-				}
-			}
-			// If not a float, skip current metric
-			metricValueParsed, err := strconv.ParseFloat(metricValue, 64)
-			if err != nil {
-				log.Errorln("Unable to convert current value to float (metricName='" + metricName + "', value='" + metricValue + "', metricHelp='" + metricHelp + "').")
-				continue
-			}
-
-			promMetricDesc := prometheus.NewDesc(prometheus.BuildFQName(namespace, metricSubsystem, metricNameCleaned), metricHelp, labelsNamesCleaned, nil)
-
-			if metricType == prometheus.GaugeValue || metricType == prometheus.CounterValue {
-				log.Debugln("	- Converting result looks like: [" + metricNameCleaned + "] : '" + fmt.Sprintf("%g", metricValueParsed) + "'.")
-				ch <- prometheus.MustNewConstMetric(promMetricDesc, metricType, metricValueParsed, labelsValues...)
-			} else {
-				count, err := strconv.ParseUint(strings.TrimSpace(row["count"]), 10, 64)
-				if err != nil {
-					log.Errorln("Unable to convert count value to int (metricName='" + metricName + "', value='" + row["count"] + "', metricHelp='" + metricHelp + "').")
-					continue
-				}
-				buckets := make(map[float64]uint64)
-				for field, le := range metricsBuckets[metricName] {
-					lelimit, err := strconv.ParseFloat(strings.TrimSpace(le), 64)
-					if err != nil {
-						log.Errorln("Unable to convert bucket limit value to float (metricName='" + metricName + "', bucketlimit='" + le + "', metricHelp='" + metricHelp + "')")
-						continue
-					}
-					counter, err := strconv.ParseUint(strings.TrimSpace(row[field]), 10, 64)
-					if err != nil {
-						log.Errorln("Unable to convert <" + field + "> value to int (metricName='" + metricName + "', value='" + row[field] + "', metricHelp='" + metricHelp + "')")
-						continue
-					}
-					buckets[lelimit] = counter
-				}
-				log.Debugln("	- Converting result looks like: [" + metricNameCleaned + "] : '" + fmt.Sprintf("%g", metricValueParsed) + "', count: '" + fmt.Sprint(count) + ", buckets: '" + fmt.Sprintf("%+v", buckets) + "'.")
-				ch <- prometheus.MustNewConstHistogram(promMetricDesc, count, metricValueParsed, buckets, labelsValues...)
-			}
-			metricsCount++
-		}
-		return nil
-	}
-
-	err := generatePrometheusMetrics(srvrmgr, dataRowToPrometheusMetricConverter, command, dateFormat, disableEmptyMetricsOverride)
-	log.Debugln("ScrapeGenericValues | metricsCount: " + fmt.Sprint(metricsCount))
+	siebelData, err := getSiebelData(smgr, metric.Command, dateFormat, disableEmptyMetricsOverride)
 	if err != nil {
 		return err
 	}
-	if !ignoreZeroResult && metricsCount == 0 {
+
+	metricsCount, err := generatePrometheusMetrics(siebelData, namespace, ch, metric)
+	log.Debugln("metricsCount: '" + fmt.Sprint(metricsCount) + "'.")
+	if err != nil {
+		return err
+	}
+
+	if metricsCount == 0 && !metric.IgnoreZeroResult {
 		return errors.New("ERROR! No metrics found while parsing. Metrics Count: '" + fmt.Sprint(metricsCount) + "'.")
 	}
 
 	return err
 }
 
-// Parse srvrmgr result and call parsing function to each row
-func generatePrometheusMetrics(srvrmgr srvrmgr.SrvrMgr, dataRowToPrometheusMetricConverter func(row map[string]string) error, command string, dateFormat string, disableEmptyMetricsOverride bool) error {
-	log.Debugln("generatePrometheusMetrics")
+func getSiebelData(smgr *srvrmgr.SrvrMgr, command string, dateFormat string, disableEmptyMetricsOverride bool) ([]map[string]string, error) {
+	siebelData := []map[string]string{}
 
-	commandResult, err := srvrmgr.ExecuteCommand(command)
+	commandResult, err := (*smgr).ExecuteCommand(command)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Check and parse srvrmgr output...
 	lines := strings.Split(commandResult, "\n")
 	if len(lines) < 3 {
-		return errors.New("ERROR! Command output is not valid: '" + commandResult + "'.")
+		return nil, errors.New("ERROR! Command output is not valid: '" + commandResult + "'.")
 	}
 
 	columnsRow := lines[0]
@@ -445,13 +403,119 @@ func generatePrometheusMetrics(srvrmgr srvrmgr.SrvrMgr, dataRowToPrometheusMetri
 			rowLen = len(rawRow)
 		}
 
+		siebelData = append(siebelData, parsedRow)
+	}
+
+	return siebelData, nil
+}
+
+// Parse srvrmgr result and call parsing function to each row
+func generatePrometheusMetrics(data []map[string]string, namespace string, ch *chan<- prometheus.Metric, metric Metric) (int, error) {
+	log.Debugln("generatePrometheusMetrics")
+
+	metricsCount := 0
+	dataRowToPrometheusMetricConverter := func(row map[string]string) error {
+		log.Debugln("dataRowToPrometheusMetricConverter")
+		log.Debugln("	- row map : '" + fmt.Sprintf("%+v", row) + "'")
+
+		// Construct labels name and value
+		labelsNamesCleaned := []string{}
+		labelsValues := []string{}
+		// if strings.Compare(fieldToAppend, "") == 0 {
+		for _, label := range metric.Labels {
+			labelsNamesCleaned = append(labelsNamesCleaned, cleanName(label))
+			labelsValues = append(labelsValues, row[label])
+		}
+		// }
+		// Construct Prometheus values to sent back
+		for metricName, metricHelp := range metric.Help {
+			metricType := getMetricType(metricName, metric.Type)
+			metricNameCleaned := cleanName(metricName)
+			if strings.Compare(metric.FieldToAppend, "") != 0 {
+				metricNameCleaned = cleanName(row[metric.FieldToAppend])
+			}
+			// Dinamic help
+			if dinHelpName, exists1 := metric.HelpField[metricName]; exists1 {
+				if dinHelpValue, exists2 := row[dinHelpName]; exists2 {
+					log.Debugln("	- [DinamicHelp]: Help value '" + metricHelp + "' append with dinamic value '" + dinHelpValue + "'.")
+					metricHelp = metricHelp + " " + dinHelpValue
+				}
+			}
+			metricValue := row[metricName]
+			// Value mapping
+			if metricMap, exists1 := metric.ValueMap[metricName]; exists1 {
+				if len(metricMap) > 0 {
+					// if mappedValue, exists2 := metricMap[metricValue]; exists2 {
+					for key, mappedValue := range metricMap {
+						if cleanName(key) == cleanName(metricValue) {
+							log.Debugln("	- [ValueMap]: Value '" + metricValue + "' converted to '" + mappedValue + "'.")
+							metricValue = mappedValue
+							break
+						}
+					}
+					// Add mapping to help
+					mappingHelp := " Value mapping: "
+					mapStrings := []string{}
+					for src, dst := range metricMap {
+						mapStrings = append(mapStrings, dst+" - '"+src+"', ")
+					}
+					sort.Strings(mapStrings)
+					for _, mapStr := range mapStrings {
+						mappingHelp = mappingHelp + mapStr
+					}
+					mappingHelp = strings.TrimRight(mappingHelp, ", ")
+					mappingHelp = mappingHelp + "."
+					metricHelp = metricHelp + mappingHelp
+				}
+			}
+			// If not a float, skip current metric
+			metricValueParsed, err := strconv.ParseFloat(metricValue, 64)
+			if err != nil {
+				log.Errorln("Unable to convert current value to float (metricName='" + metricName + "', value='" + metricValue + "', metricHelp='" + metricHelp + "').")
+				continue
+			}
+
+			promMetricDesc := prometheus.NewDesc(prometheus.BuildFQName(namespace, metric.Subsystem, metricNameCleaned), metricHelp, labelsNamesCleaned, nil)
+
+			if metricType == prometheus.GaugeValue || metricType == prometheus.CounterValue {
+				log.Debugln("	- Converting result looks like: [" + metricNameCleaned + "] : '" + fmt.Sprintf("%g", metricValueParsed) + "'.")
+				*ch <- prometheus.MustNewConstMetric(promMetricDesc, metricType, metricValueParsed, labelsValues...)
+			} else {
+				count, err := strconv.ParseUint(strings.TrimSpace(row["count"]), 10, 64)
+				if err != nil {
+					log.Errorln("Unable to convert count value to int (metricName='" + metricName + "', value='" + row["count"] + "', metricHelp='" + metricHelp + "').")
+					continue
+				}
+				buckets := make(map[float64]uint64)
+				for field, le := range metric.Buckets[metricName] {
+					lelimit, err := strconv.ParseFloat(strings.TrimSpace(le), 64)
+					if err != nil {
+						log.Errorln("Unable to convert bucket limit value to float (metricName='" + metricName + "', bucketlimit='" + le + "', metricHelp='" + metricHelp + "')")
+						continue
+					}
+					counter, err := strconv.ParseUint(strings.TrimSpace(row[field]), 10, 64)
+					if err != nil {
+						log.Errorln("Unable to convert <" + field + "> value to int (metricName='" + metricName + "', value='" + row[field] + "', metricHelp='" + metricHelp + "')")
+						continue
+					}
+					buckets[lelimit] = counter
+				}
+				log.Debugln("	- Converting result looks like: [" + metricNameCleaned + "] : '" + fmt.Sprintf("%g", metricValueParsed) + "', count: '" + fmt.Sprint(count) + ", buckets: '" + fmt.Sprintf("%+v", buckets) + "'.")
+				*ch <- prometheus.MustNewConstHistogram(promMetricDesc, count, metricValueParsed, buckets, labelsValues...)
+			}
+			metricsCount++
+		}
+		return nil
+	}
+
+	for _, row := range data {
 		// Convert parsed row to Prometheus Metric
-		if err := dataRowToPrometheusMetricConverter(parsedRow); err != nil {
-			return err
+		if err := dataRowToPrometheusMetricConverter(row); err != nil {
+			return metricsCount, err
 		}
 	}
 
-	return nil
+	return metricsCount, nil
 }
 
 func getMetricType(metricName string, metricsTypes map[string]string) prometheus.ValueType {
@@ -520,6 +584,13 @@ func hashFile(h hash.Hash, fn string) error {
 		return err
 	}
 	return nil
+}
+
+func reloadMetricsIfItChanged(defaultMetricsFile, customMetricsFile string) {
+	if checkIfMetricsChanged(customMetricsFile) {
+		log.Infoln("Custom metrics changed, reload it...")
+		reloadMetrics(defaultMetricsFile, customMetricsFile)
+	}
 }
 
 func checkIfMetricsChanged(customMetricsFile string) bool {

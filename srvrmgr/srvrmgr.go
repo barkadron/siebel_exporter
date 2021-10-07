@@ -12,12 +12,12 @@ import (
 	"github.com/prometheus/common/log"
 )
 
-// Status is an enumeration of srvrmgr statuses that represent a simple value.
-type Status int
+// SrvrmgrStatus is an enumeration of srvrmgr statuses that represent a simple value.
+type SrvrmgrStatus int
 
-// Possible values for the Status enum.
+// Possible values for the SrvrmgrStatus enum.
 const (
-	_ Status = iota
+	_ SrvrmgrStatus = iota
 	Disconnected
 	Connecting
 	Disconnecting
@@ -25,23 +25,44 @@ const (
 	ConnectionError
 )
 
-type safeStatus struct {
-	sync.RWMutex
-	value Status
+// String return string representation on SrvrmgrStatus value
+func (s SrvrmgrStatus) String() string {
+	// https://stackoverflow.com/questions/14426366/what-is-an-idiomatic-way-of-representing-enums-in-go
+	// https://stackoverflow.com/a/41480652
+	// https://pkg.go.dev/golang.org/x/tools/cmd/stringer
+	switch s {
+	case Disconnected:
+		return "Disconnected"
+	case Connecting:
+		return "Connecting"
+	case Disconnecting:
+		return "Disconnecting"
+	case Connected:
+		return "Connected"
+	case ConnectionError:
+		return "ConnectionError"
+	default:
+		return "Unknown"
+	}
 }
 
-func (ss *safeStatus) Get() Status {
+type safeStatus struct {
+	sync.RWMutex
+	value SrvrmgrStatus
+}
+
+func (ss *safeStatus) Get() SrvrmgrStatus {
 	ss.RLock()
 	defer ss.RUnlock()
 
 	return ss.value
 }
 
-func (ss *safeStatus) Set(value Status) error {
+func (ss *safeStatus) Set(value SrvrmgrStatus) error {
 	ss.Lock()
 	defer ss.Unlock()
 
-	log.Debugf("Set srvrmgr status from '%v' to '%v'.", ss.value, value)
+	log.Debugf("Set srvrmgr status from '%v' to '%v'.", ss.value.String(), value.String())
 	ss.value = value
 	return nil
 }
@@ -78,11 +99,11 @@ type srvrMgr struct {
 	disconnectMu   sync.Mutex
 }
 
-// SrvrMgr is a public interface for the srvrmgr struct (https://stackoverflow.com/a/53034166).
-type SrvrMgr interface {
+// SrvrMgr is a public interface for the srvrmgr struct.
+type SrvrMgr interface { // https://stackoverflow.com/a/53034166
 	Connect() error
 	Disconnect() error
-	GetStatus() Status
+	GetStatus() SrvrmgrStatus
 	ExecuteCommand(cmd string) (string, error)
 	// GetApplicationServerName() string
 }
@@ -133,7 +154,7 @@ func (sm *srvrMgr) Disconnect() error {
 	return sm.disconnect()
 }
 
-func (sm *srvrMgr) GetStatus() Status {
+func (sm *srvrMgr) GetStatus() SrvrmgrStatus {
 	return sm.status.Get()
 }
 
@@ -143,7 +164,10 @@ func (sm *srvrMgr) GetStatus() Status {
 
 func (sm *srvrMgr) ExecuteCommand(cmd string) (string, error) {
 	cmd = strings.TrimSpace(cmd)
-	if strings.ToLower(cmd) == "exit" || strings.ToLower(cmd) == "quit" || strings.Contains(strings.ToLower(cmd), "set server") {
+	if strings.ToLower(cmd) == "exit" ||
+		strings.ToLower(cmd) == "quit" ||
+		strings.Contains(strings.ToLower(cmd), "set server") ||
+		strings.Contains(strings.ToLower(cmd), "unset server") {
 		return "", errors.New("Error! Command '" + cmd + "' not allowed.")
 	}
 	return sm.executeCommand(cmd)
@@ -175,8 +199,13 @@ func (sm *srvrMgr) connect() error {
 		return err
 	}
 
-	// @FIXME: what if GW is up, but all APPs are down?
-	if !strings.Contains(connRes, "Connected to 1 server(s)") {
+	log.Infoln(connRes)
+
+	// If GW is up, but all APPs are down:
+	// 		"Connecting to Gateway:localhost\n\nConnected to 0 server(s) out of a total of 1 server(s) in the enterprise\n\nFailed to connect server app1: Handshake failed\nsrvrmgr:app1>"
+
+	// if !strings.Contains(connRes, "Connected to 1 server(s)") {
+	if !strings.Contains(connRes, "total of 1 server(s)") {
 		sm.status.Set(ConnectionError)
 		defer sm.disconnect()
 		err := fmt.Errorf("error! Connection established, but it looks like there are multiple servers. Did you forget to define '/s' argument in connection command?")
