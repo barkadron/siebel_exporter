@@ -266,13 +266,13 @@ func pingGatewayServer(smgr *srvrmgr.SrvrMgr) error {
 
 func pingApplicationServer(smgr *srvrmgr.SrvrMgr) error {
 	log.Debugln("Ping Siebel Application Server...")
-	if _, err := (*smgr).ExecuteCommand("list comp show CC_ALIAS"); err != nil {
+	if _, err := (*smgr).ExecuteCommand("list state values show STATEVAL_NAME"); err != nil {
 		log.Errorln("Error pinging Siebel Application Server: \n", err, "\n")
 		log.Warnln("Unable to scrape: srvrmgr was lost connection to the Siebel Application Server. Will try to reconnect on next scrape.")
 		(*smgr).Disconnect()
 		return err
 	}
-	log.Debugln("Successfully pinged Siebel Gateway Server.")
+	log.Debugln("Successfully pinged Siebel Application Server.")
 	return nil
 }
 
